@@ -165,6 +165,34 @@ input, textarea, [contenteditable='true'] {
 @keyframes cth-spin { to { transform: rotate(360deg); } }
 .cth-spin { animation: cth-spin 0.9s linear infinite; }
 
+/* Agent sidebar (fork perso): a working agent's avatar breathes in its accent
+   colour; an agent that just SENT a message fires one ring outward from it and
+   shows a small ↗ badge. --cth-agent-accent is set inline on the avatar. */
+@keyframes cth-agent-breathe {
+  0%, 100% { box-shadow: 0 0 0 0 color-mix(in srgb, var(--cth-agent-accent) 0%, transparent); }
+  50%      { box-shadow: 0 0 0 3px color-mix(in srgb, var(--cth-agent-accent) 45%, transparent); }
+}
+@keyframes cth-agent-send-ring {
+  0%   { transform: scale(1);    opacity: 0.85; }
+  100% { transform: scale(1.55); opacity: 0; }
+}
+@keyframes cth-agent-send-badge {
+  0%   { transform: translate(-3px, 3px) scale(0.5); opacity: 0; }
+  15%  { transform: translate(0, 0) scale(1);        opacity: 1; }
+  75%  { transform: translate(0, 0) scale(1);        opacity: 1; }
+  100% { transform: translate(3px, -3px) scale(0.9); opacity: 0; }
+}
+@keyframes cth-agent-send-line {
+  0%   { opacity: 0; transform: translateX(-4px); }
+  12%  { opacity: 1; transform: translateX(0); }
+  85%  { opacity: 1; }
+  100% { opacity: 0; }
+}
+.cth-agent-breathe { --cth-agent-accent: var(--cth-coral); animation: cth-agent-breathe 1.6s ease-in-out infinite; }
+.cth-agent-send-ring { animation: cth-agent-send-ring 0.9s ease-out 2 both; }
+.cth-agent-send-badge { animation: cth-agent-send-badge 1.8s ease-out both; }
+.cth-agent-send-line { animation: cth-agent-send-line 1.8s ease-out both; }
+
 /* Reduce motion */
 @media (prefers-reduced-motion: reduce) {
   * { animation-duration: 0s !important; transition-duration: 0s !important; }
@@ -362,3 +390,28 @@ input, textarea, [contenteditable='true'] {
 .cth-chat-input:focus-within { box-shadow: inset 0 0 0 1.5px var(--cth-ink-700); }
 .cth-chat-iconbtn:hover { background: var(--cth-cream-200) !important; }
 .cth-chat-menuitem:hover, .cth-chat-menuitem:focus-visible { background: var(--cth-cream-200) !important; outline: none; }
+.cth-conv-group:hover { background: var(--cth-cream-100) !important; color: var(--cth-ink-700) !important; }
+
+/* "Needs you" attention pulse: a ring that swells out of the badge, and a
+ * soft glow around a choice menu waiting in the conversation. */
+@keyframes cth-attn-ring {
+  0%   { box-shadow: 0 0 0 0 color-mix(in srgb, var(--cth-coral) 70%, transparent); transform: scale(1); }
+  15%  { transform: scale(1.18); }
+  30%  { transform: scale(1); }
+  70%  { box-shadow: 0 0 0 7px color-mix(in srgb, var(--cth-coral) 0%, transparent); }
+  100% { box-shadow: 0 0 0 0 transparent; }
+}
+.cth-attn-badge { animation: cth-attn-ring 1.6s ease-out infinite; }
+@keyframes cth-attn-glow {
+  0%, 100% { box-shadow: inset 0 1px 0 var(--cth-ink-900), inset 4px 0 0 var(--cth-coral); }
+  50%      { box-shadow: inset 0 1px 0 var(--cth-ink-900), inset 4px 0 0 color-mix(in srgb, var(--cth-coral) 25%, transparent); }
+}
+.cth-attn-card { animation: cth-attn-glow 1.4s ease-in-out infinite; }
+
+/* Conversation: add-reaction button shows on hover; queued dot; ack pop-in. */
+.cth-react-add { opacity: 0; pointer-events: none; transition: opacity 120ms; }
+.cth-react-host:hover > .cth-react-add, .cth-react-add[data-open], .cth-react-add:focus-visible { opacity: 1; pointer-events: auto; }
+@keyframes cth-pending-blink { 0%, 100% { opacity: 1; } 50% { opacity: 0.25; } }
+.cth-pending-dot { width: 6px; height: 6px; border-radius: 3px; background: var(--cth-ink-500); animation: cth-pending-blink 1.4s ease-in-out infinite; }
+@keyframes cth-ack-pop { 0% { transform: scale(0.4); opacity: 0; } 70% { transform: scale(1.15); opacity: 1; } 100% { transform: scale(1); } }
+.cth-ack-pop { animation: cth-ack-pop 260ms ease-out; }

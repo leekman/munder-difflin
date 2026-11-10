@@ -57,3 +57,18 @@ export function isInboxNudge(text: string): boolean {
   const t = text.trim();
   return t.startsWith(NUDGE_HEAD) || t.startsWith(LEGACY_NUDGE_HEAD);
 }
+
+/**
+ * Read an inbox-wake nudge back: the message ids it names (`[]` for a bare
+ * `📬 inbox` or the legacy long form), or `null` when the text is not a nudge.
+ * Lets the UI show who wrote and what about, instead of the raw ids.
+ */
+export function parseInboxNudge(text: string): string[] | null {
+  const t = text.trim();
+  if (t.startsWith(LEGACY_NUDGE_HEAD)) return [];
+  if (!t.startsWith(NUDGE_HEAD)) return null;
+  const rest = t.slice(NUDGE_HEAD.length);
+  if (!rest.trim()) return [];
+  if (!rest.startsWith(':')) return null;
+  return rest.slice(1).split(',').map((x) => x.trim()).filter(Boolean);
+}

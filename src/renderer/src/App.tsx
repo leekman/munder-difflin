@@ -40,6 +40,13 @@ const LS_AGENT_COLUMN_WIDTH = 'cth.agentColumnWidth';
 const AGENT_COLUMN_DEFAULT = 260;
 const AGENT_COLUMN_MIN = 200;
 const AGENT_COLUMN_MAX = 420;
+/** Collapsed agent column: a rail of avatars (fork perso). */
+const LS_AGENT_COLUMN_COLLAPSED = 'cth.agentColumnCollapsed';
+const AGENT_COLUMN_COLLAPSED_WIDTH = 54;
+
+function readAgentColumnCollapsed(): boolean {
+  try { return window.localStorage.getItem(LS_AGENT_COLUMN_COLLAPSED) === '1'; } catch { return false; }
+}
 
 function clampAgentColumnWidth(px: number): number {
   return Math.min(AGENT_COLUMN_MAX, Math.max(AGENT_COLUMN_MIN, Math.round(px)));
@@ -86,6 +93,19 @@ export function App() {
     const next = clampAgentColumnWidth(px);
     setAgentColumnWidthState(next);
     try { window.localStorage.setItem(LS_AGENT_COLUMN_WIDTH, String(next)); } catch { /* storage unavailable */ }
+  }, []);
+  const [agentColumnCollapsed, setAgentColumnCollapsed] = useState<boolean>(readAgentColumnCollapsed);
+  // The width transition runs only around a toggle — during a splitter drag
+  // it would make the column lag behind the cursor.
+  const [agentColumnAnimating, setAgentColumnAnimating] = useState(false);
+  const toggleAgentColumn = useCallback(() => {
+    setAgentColumnAnimating(true);
+    setTimeout(() => setAgentColumnAnimating(false), 220);
+    setAgentColumnCollapsed((prev) => {
+      const next = !prev;
+      try { window.localStorage.setItem(LS_AGENT_COLUMN_COLLAPSED, next ? '1' : '0'); } catch { /* storage unavailable */ }
+      return next;
+    });
   }, []);
   const ideOpen = useStore(s => s.ideOpen);
   const setIdeOpen = useStore(s => s.setIdeOpen);
@@ -446,20 +466,23 @@ export function App() {
       }}>
         {/* LEFT — the agent column (cards stacked, add/restore pinned at the bottom). */}
         <div style={{
-          width: agentColumnWidth, flexShrink: 0,
-          minHeight: 0, display: 'flex', flexDirection: 'column'
+          width: agentColumnCollapsed ? AGENT_COLUMN_COLLAPSED_WIDTH : agentColumnWidth, flexShrink: 0,
+          minHeight: 0, display: 'flex', flexDirection: 'column',
+          transition: agentColumnAnimating ? 'width 160ms ease-out' : undefined,
+          // Collapsed there is no splitter: keep a hairline between rail and terminal.
+          borderInlineEnd: agentColumnCollapsed ? '1px solid var(--cth-ink-100)' : 'none'
         }}>
-          <AgentStrip config={config} />
+          <AgentStrip config={config} collapsed={agentColumnCollapsed} onToggleCollapsed={toggleAgentColumn} />
         </div>
 
-        <SidebarSplitter
+        {!agentColumnCollapsed && <SidebarSplitter
           width={agentColumnWidth}
           onChange={setAgentColumnWidth}
           viewportWidth={vpWidth}
           min={AGENT_COLUMN_MIN}
           max={AGENT_COLUMN_MAX}
           defaultWidth={AGENT_COLUMN_DEFAULT}
-        />
+        />}
 
         {/* RIGHT — the selected agent's terminal, full remaining width, or an empty state.
             Also hosts the OPEN memory panel as an overlay (its pill sits in the column footer). */}

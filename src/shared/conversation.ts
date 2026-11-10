@@ -19,21 +19,95 @@ export type RawConversationItem =
   | { kind: 'user'; id: string; ts?: string; text: string; images?: number }
   | { kind: 'assistant'; id: string; ts?: string; text: string }
   | { kind: 'thinking'; id: string; ts?: string; text: string }
-  | { kind: 'tool'; id: string; ts?: string; name: string; summary: string; input: string; targets?: string[] }
+  | { kind: 'tool'; id: string; ts?: string; name: string; summary: string; input: string; targets?: string[]; plan?: PlanOp }
   | { kind: 'toolResult'; toolUseId: string; text: string; isError: boolean }
   | { kind: 'event'; id: string; ts?: string; text: string };
+
+/** A change to the agent's step list, read from its planning tools:
+ *  `TodoWrite` replaces the whole list; `TaskCreate` / `TaskUpdate` (newer
+ *  Claude Code) add or change one step. */
+export type PlanStatus = 'pending' | 'in_progress' | 'completed';
+export interface PlanStep { id: string; title: string; activeForm?: string; status: PlanStatus }
+export type PlanOp =
+  | { op: 'replace'; steps: PlanStep[] }
+  | { op: 'create'; title: string; activeForm?: string }
+  | { op: 'update'; taskId: string; status?: PlanStatus | 'deleted'; title?: string; activeForm?: string };
+
+function planStatus(v: unknown): PlanStatus {
+  return v === 'completed' || v === 'in_progress' ? v : 'pending';
+}
+
+export function planOpFor(name: string, input: unknown): PlanOp | undefined {
+  const o = (input && typeof input === 'object' ? input : {}) as Record<string, unknown>;
+  if (name === 'TodoWrite' && Array.isArray(o.todos)) {
+    return {
+      op: 'replace',
+      steps: o.todos.map((t, i) => {
+        const td = (t ?? {}) as Record<string, unknown>;
+        return {
+          id: str(td.id) ?? String(i + 1),
+          title: String(td.content ?? td.subject ?? ''),
+          ...(str(td.activeForm) ? { activeForm: str(td.activeForm) } : {}),
+          status: planStatus(td.status)
+        };
+      })
+    };
+  }
+  if (name === 'TaskCreate' && (str(o.subject) || str(o.title))) {
+    return { op: 'create', title: str(o.subject) ?? str(o.title)!, ...(str(o.activeForm) ? { activeForm: str(o.activeForm) } : {}) };
+  }
+  if (name === 'TaskUpdate' && (str(o.taskId) || typeof o.taskId === 'number')) {
+    const status = o.status === 'deleted' ? 'deleted' as const : o.status !== undefined ? planStatus(o.status) : undefined;
+    return {
+      op: 'update', taskId: String(o.taskId),
+      ...(status ? { status } : {}),
+      ...(str(o.subject) ? { title: str(o.subject) } : {}),
+      ...(str(o.activeForm) ? { activeForm: str(o.activeForm) } : {})
+    };
+  }
+  return undefined;
+}
+
+/** The current step list, replaying every plan operation in order. A created
+ *  task's id is read from its result ("Task #3 created…"), else numbered in
+ *  creation order. */
+export function derivePlan(entries: readonly ConversationEntry[]): PlanStep[] {
+  let steps: PlanStep[] = [];
+  let created = 0;
+  for (const e of entries) {
+    if (e.kind !== 'tool' || !e.plan || e.isError) continue;
+    const op = e.plan;
+    if (op.op === 'replace') { steps = op.steps.map((s) => ({ ...s })); continue; }
+    if (op.op === 'create') {
+      created++;
+      const m = e.result?.match(/#\s*(\d+)/);
+      steps = [...steps, { id: m ? m[1] : String(created), title: op.title, activeForm: op.activeForm, status: 'pending' }];
+      continue;
+    }
+    const id = op.taskId.replace(/^#/, '');
+    const status = op.status;
+    if (status === 'deleted') { steps = steps.filter((s) => s.id !== id); continue; }
+    steps = steps.map((s): PlanStep => s.id !== id ? s : {
+      ...s,
+      ...(status ? { status } : {}),
+      ...(op.title ? { title: op.title } : {}),
+      ...(op.activeForm ? { activeForm: op.activeForm } : {})
+    });
+  }
+  return steps.filter((s) => s.title);
+}
 
 /** What the view renders: a tool call carries its result once it arrives. */
 export type ConversationEntry =
   | Exclude<RawConversationItem, { kind: 'tool' } | { kind: 'toolResult' }>
   | {
       kind: 'tool'; id: string; ts?: string; name: string; summary: string; input: string;
-      targets?: string[]; result?: string; isError?: boolean;
+      targets?: string[]; plan?: PlanOp; result?: string; isError?: boolean;
     };
 
-/** Long tool inputs/outputs are clipped: the view is for following along, the
- *  raw terminal (one click away) still has everything. */
-export const MAX_DETAIL_CHARS = 6000;
+/** Safety cap on one tool input/output (a runaway log), high enough that a
+ *  command, diff or result normally shows in full when its card is opened. */
+export const MAX_DETAIL_CHARS = 200_000;
 /** Folded entries kept in memory per agent — the oldest fall off the top. */
 export const MAX_ENTRIES = 1500;
 
@@ -86,6 +160,10 @@ function formatToolInput(name: string, input: unknown): string {
       const mark = td.status === 'completed' ? '[x]' : td.status === 'in_progress' ? '[~]' : '[ ]';
       return `${mark} ${String(td.content ?? '')}`;
     }).join('\n'));
+  }
+  if (name === 'Write' && typeof o.file_path === 'string' && typeof o.content === 'string'
+    && !/[\\/]outbox[\\/]/.test(o.file_path)) {
+    return clip(`${o.file_path}\n${o.content}`);
   }
   if ((name === 'Edit' || name === 'MultiEdit') && typeof o.file_path === 'string') {
     const parts: string[] = [String(o.file_path)];
@@ -214,10 +292,12 @@ export function parseTranscriptRecord(rec: unknown): RawConversationItem[] {
         out.push({ kind: 'thinking', id: bid, ts, text: clip(blk.thinking) });
       } else if (blk.type === 'tool_use' && typeof blk.name === 'string') {
         const targets = toolTargets(blk.name, blk.input);
+        const plan = planOpFor(blk.name, blk.input);
         out.push({
           kind: 'tool', id: str(blk.id) ?? bid, ts, name: blk.name,
           summary: summarizeToolInput(blk.name, blk.input), input: formatToolInput(blk.name, blk.input),
-          ...(targets.length ? { targets } : {})
+          ...(targets.length ? { targets } : {}),
+          ...(plan ? { plan } : {})
         });
       }
     });

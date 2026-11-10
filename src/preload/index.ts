@@ -706,6 +706,9 @@ const api = {
   hiveLog: (n?: number): Promise<unknown[]> => ipcRenderer.invoke('hive:log', n ?? 200),
   hiveMemory: (id: string): Promise<string> => ipcRenderer.invoke('hive:memory', id),
   hiveInbox: (id: string): Promise<HiveMessage[]> => ipcRenderer.invoke('hive:inbox', id),
+  /** Messages of an agent's inbox by id, pending or already filed under .done. */
+  hiveInboxMessages: (id: string, ids: string[]): Promise<HiveMessage[]> =>
+    ipcRenderer.invoke('hive:inboxMessages', id, ids),
 
   // ─── Ephemeral workers (P4 — Slack-triggered isolated workers) ───────────
   /** Live ephemeral workers + worktrees preserved awaiting integration/GC. */

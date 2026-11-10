@@ -233,37 +233,56 @@ function ensureMineIgnore(agentDir: string): void {
 
 // ─── HiveManager ────────────────────────────────────────────────────────────
 
+/** The kinds of lexical damage repairJsonStrings knows how to undo. */
+export type OutboxRepair = 'literal-line-break' | 'invalid-escape';
+
+const JSON_SIMPLE_ESCAPES = new Set(['"', '\\', '/', 'b', 'f', 'n', 'r', 't']);
+
 /**
- * Repair only literal CR/LF characters that occur inside JSON strings.
+ * Repair two narrow, unambiguous lexical faults inside JSON strings.
  *
  * Agents normally publish outbox messages through JSON.stringify, but a manual
- * shell write can put real line-break bytes in a multi-line body. JSON rejects
- * those bytes inside a string even though the intended value is unambiguous.
- * Keep this lexical and deliberately narrow: JSON.parse remains the acceptance
+ * shell write can leave:
+ *  - real CR/LF bytes in a multi-line body (JSON rejects them inside a string);
+ *  - a lone backslash that is not a JSON escape. On Windows this is every path
+ *    an agent pastes into its message: `"Rapport : C:\Users\damien\..."`
+ *    (single backslashes) makes `\U`, `\d`, `\s` invalid escapes and the whole
+ *    message used to be quarantined — a worker's `done` never reached the
+ *    orchestrator and the floor silently stalled. Such a backslash can only
+ *    have meant a literal backslash, so it is doubled. `\u` without four hex
+ *    digits after it (`C:\users`) is the same case.
+ * Valid escapes are left exactly as written. JSON.parse remains the acceptance
  * gate, and every other malformed shape is left for quarantine.
  */
-function repairLiteralLineBreaksInJsonStrings(raw: string): { text: string; changed: boolean } {
+export function repairJsonStrings(raw: string): { text: string; changed: boolean; repairs: OutboxRepair[] } {
   let text = '';
   let inString = false;
-  let escaped = false;
-  let changed = false;
+  const repairs = new Set<OutboxRepair>();
+  const chars = Array.from(raw);
 
-  for (const ch of raw) {
+  for (let i = 0; i < chars.length; i++) {
+    const ch = chars[i];
     if (!inString) {
       text += ch;
       if (ch === '"') inString = true;
       continue;
     }
 
-    if (escaped) {
-      text += ch;
-      escaped = false;
-      continue;
-    }
-
     if (ch === '\\') {
-      text += ch;
-      escaped = true;
+      const next = chars[i + 1];
+      if (next !== undefined && JSON_SIMPLE_ESCAPES.has(next)) {
+        text += ch + next;
+        i++;
+        continue;
+      }
+      if (next === 'u' && /^[0-9a-fA-F]{4}$/.test(chars.slice(i + 2, i + 6).join(''))) {
+        text += ch + next;
+        i++;
+        continue;
+      }
+      // Not a JSON escape: the writer meant a literal backslash.
+      text += '\\\\';
+      repairs.add('invalid-escape');
       continue;
     }
 
@@ -275,20 +294,20 @@ function repairLiteralLineBreaksInJsonStrings(raw: string): { text: string; chan
 
     if (ch === '\n') {
       text += '\\n';
-      changed = true;
+      repairs.add('literal-line-break');
       continue;
     }
 
     if (ch === '\r') {
       text += '\\r';
-      changed = true;
+      repairs.add('literal-line-break');
       continue;
     }
 
     text += ch;
   }
 
-  return { text, changed };
+  return { text, changed: repairs.size > 0, repairs: Array.from(repairs) };
 }
 
 /** Keep the crash directory bounded.
@@ -1799,24 +1818,23 @@ export class HiveManager {
           try {
             partial = JSON.parse(raw) as Partial<HiveMessage>;
           } catch {
-            const repaired = repairLiteralLineBreaksInJsonStrings(raw);
-            if (!repaired.changed) {
+            const repaired = repairJsonStrings(raw);
+            let parsed: Partial<HiveMessage> | null = null;
+            if (repaired.changed) {
+              try { parsed = JSON.parse(repaired.text) as Partial<HiveMessage>; } catch { parsed = null; }
+            }
+            if (!parsed) {
               this.appendLog({ kind: 'drop', reason: 'malformed-json', from: id, file: f });
               try { renameSync(full, join(outbox, '.sent', `bad-${f}`)); } catch { /* noop */ }
+              this.notifyUndeliverable(id, f);
               continue;
             }
-            try {
-              partial = JSON.parse(repaired.text) as Partial<HiveMessage>;
-            } catch {
-              this.appendLog({ kind: 'drop', reason: 'malformed-json', from: id, file: f });
-              try { renameSync(full, join(outbox, '.sent', `bad-${f}`)); } catch { /* noop */ }
-              continue;
-            }
+            partial = parsed;
             this.appendLog({
               kind: 'outbox-repair',
               from: id,
               file: f,
-              repair: 'literal-line-break'
+              repair: repaired.repairs.join('+')
             });
           }
           const msg = this.normalize(partial, id);
@@ -1832,6 +1850,30 @@ export class HiveManager {
     }
     if (routed > 0) this.commit(`hive: routed ${routed} message(s)`);
     return routed;
+  }
+
+  /** Tell an agent that one of its outbox files was quarantined. Without this
+   *  the sender believes it delivered (typically its `done` to the
+   *  orchestrator), the recipient never hears of it, and the floor stalls with
+   *  everyone idle. The notice lands in the sender's own inbox, so the usual
+   *  wake path (Stop hook / idle nudge) makes it rewrite the message. */
+  private notifyUndeliverable(agentId: string, file: string): void {
+    try {
+      if (!this.registry().agents[agentId]) return;
+      this.routeMessage(this.normalize({
+        to: agentId,
+        act: 'inform',
+        subject: `Message NOT delivered: outbox/${file} is not valid JSON`,
+        body: [
+          `Your outbox file \`${file}\` could not be parsed as JSON, so it was NOT delivered to anyone.`,
+          `It was moved to \`outbox/.sent/bad-${file}\`.`,
+          'Write the message again as a NEW file in your outbox. Generate it with a JSON serializer',
+          '(e.g. `node -e "fs.writeFileSync(p, JSON.stringify(msg))"` or `ConvertTo-Json`) rather than by hand,',
+          'and write file paths with forward slashes (C:/Users/...) or doubled backslashes.'
+        ].join('\n'),
+        requires_reply: false
+      }, 'system'));
+    } catch { /* best-effort: never break the router */ }
   }
 
   // — read helpers (for IPC / UI) —
@@ -1929,6 +1971,92 @@ export class HiveManager {
   }
   inbox(id: string): HiveMessage[] {
     return this.listMessages(join(this.agentDir(id), 'inbox'));
+  }
+  /**
+   * Look up messages of an agent's inbox by id, pending or already handled.
+   *
+   * Backs the readable rendering of the inbox-wake nudge (`📬 inbox: id1, id2`)
+   * in the Conversation view. By the time the human scrolls past it the agent
+   * has usually dealt with that mail, and agents do not all file it the same
+   * way: inbox/.done as asked, another sub-folder of inbox/, a new file name, or
+   * plain deletion. So the lookup widens step by step until every id is found:
+   *   1. the agent's inbox/ and every sub-folder of it (by `<id>.json`, then by
+   *      the `id` field of each file);
+   *   2. every agent's outbox/.sent, where the router archives what it sent;
+   *   3. the hive log, which records sender, recipient and subject of every
+   *      routed message (no body), so even a deleted message keeps a title.
+   * Ids that are not plain file-name tokens are ignored (no path traversal).
+   */
+  inboxMessagesById(agentId: string, ids: string[]): HiveMessage[] {
+    const wanted = [...new Set(ids)].filter((x) => /^[\w.:-]{1,200}$/.test(x)).slice(0, 50);
+    const root = this.root();
+    if (!wanted.length || !root) return [];
+    const found = new Map<string, HiveMessage>();
+    const missing = () => wanted.filter((x) => !found.has(x));
+    const read = (fp: string): Partial<HiveMessage> | null => {
+      try { return JSON.parse(readFileSync(fp, 'utf8')) as Partial<HiveMessage>; } catch { return null; }
+    };
+    const keep = (m: Partial<HiveMessage> | null, id: string) => {
+      if (m && !found.has(id)) found.set(id, { ...(m as HiveMessage), id });
+    };
+    const subdirs = (dir: string): string[] => {
+      try {
+        return readdirSync(dir, { withFileTypes: true }).filter((d) => d.isDirectory()).map((d) => join(dir, d.name));
+      } catch { return []; }
+    };
+    /** Find the missing ids in these folders: by file name first, then by content. */
+    const search = (dirs: string[]) => {
+      for (const id of missing()) {
+        for (const d of dirs) {
+          const fp = join(d, `${id}.json`);
+          if (existsSync(fp)) { keep(read(fp), id); if (found.has(id)) break; }
+        }
+      }
+      for (const d of dirs) {
+        const left = new Set(missing());
+        if (!left.size) return;
+        let files: string[] = [];
+        try { files = readdirSync(d).filter((f) => f.endsWith('.json')).sort(); } catch { continue; }
+        for (const f of files.slice(-1000)) {
+          const m = read(join(d, f));
+          if (m?.id && left.has(m.id)) { keep(m, m.id); left.delete(m.id); if (!left.size) break; }
+        }
+      }
+    };
+
+    const inbox = join(this.agentDir(agentId), 'inbox');
+    search([inbox, ...subdirs(inbox)]);
+    if (missing().length) {
+      search(subdirs(join(root, 'agents')).map((a) => join(a, 'outbox', '.sent')).filter((d) => existsSync(d)));
+    }
+    if (missing().length) {
+      // Mail an agent wrote straight into a peer's inbox, or filed in another
+      // agent's tree (cc, misrouted, not yet routed out of an outbox).
+      const agents = subdirs(join(root, 'agents'));
+      const ib = agents.map((a) => join(a, 'inbox'));
+      search([...ib, ...ib.flatMap(subdirs), ...agents.map((a) => join(a, 'outbox'))].filter((d) => existsSync(d)));
+    }
+    if (missing().length) {
+      const left = new Set(missing());
+      try {
+        const lines = readFileSync(join(root, 'log.jsonl'), 'utf8').split('\n');
+        for (let i = lines.length - 1; i >= 0 && left.size; i--) {
+          const line = lines[i];
+          if (!line || !line.includes('"message"')) continue;
+          let ev: Record<string, unknown>;
+          try { ev = JSON.parse(line) as Record<string, unknown>; } catch { continue; }
+          const id = typeof ev.id === 'string' ? ev.id : '';
+          if (ev.kind !== 'message' || !left.has(id)) continue;
+          left.delete(id);
+          keep({
+            id, from: String(ev.from ?? ''), to: String(ev.to ?? ''),
+            act: ev.act as HiveMessage['act'], subject: String(ev.subject ?? ''), body: '',
+            created_at: typeof ev.ts === 'number' ? new Date(ev.ts).toISOString() : ''
+          }, id);
+        }
+      } catch { /* no log yet */ }
+    }
+    return wanted.filter((x) => found.has(x)).map((x) => found.get(x)!);
   }
   /** Read an agent's OUTBOX (messages it has authored/sent). Symmetric with
    *  inbox(); the router drains live outbox files into recipients' inboxes and
@@ -2848,6 +2976,11 @@ Write one JSON file into \`outbox/\` (any filename ending in \`.json\`):
 \`\`\`
 
 The harness fills in \`id\`, \`from\`, \`hops\`, and timestamps.
+
+The file must be valid JSON: generate it with a JSON serializer rather than by hand, and
+write file paths with forward slashes (\`C:/Users/...\`) or doubled backslashes — a lone
+\`\\\` is not valid inside a JSON string. If a file can't be parsed you get a "Message NOT
+delivered" notice in your inbox; send it again.
 
 ## Rules of the road
 - Only \`request\`, \`query\`, and \`propose\` expect a reply. \`inform\` and \`done\` are terminal —

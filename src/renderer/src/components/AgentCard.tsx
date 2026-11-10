@@ -5,6 +5,7 @@ import { useHasTerminalDraft } from './terminalPool';
 import { AgentMonogram } from './AgentMonogram';
 import { AccentColorName } from '@/design/tokens';
 import { AgentNameEditor } from './AgentNameEditor';
+import { CliSpinner } from './CliSpinner';
 
 export interface AgentCardProps {
   name: string;
@@ -40,6 +41,80 @@ export interface AgentCardProps {
   /** Opens the note editor (the strip owns the editing overlay). When set, the
    *  card shows a small ✎ affordance on its note row. */
   onEditNote?: () => void;
+  /** Collapsed sidebar: only the avatar, with its status cue on a corner. */
+  compact?: boolean;
+  /** Set while the agent has just sent a hive message: `key` restarts the
+   *  pulse on every send, `toLabel` names the recipients. */
+  sending?: { key: number; toLabel: string; subject: string };
+}
+
+/** Statuses during which the agent is actively busy (the CLI shows its star). */
+const BUSY: ReadonlySet<StatusKind> = new Set<StatusKind>(['working', 'thinking', 'compacting']);
+const BUSY_COLOR: Partial<Record<StatusKind, string>> = {
+  working: 'var(--cth-status-working)',
+  thinking: 'var(--cth-status-thinking)',
+  compacting: 'var(--cth-status-compacting)'
+};
+
+/** The monogram plus its activity cues: a breathing halo while the agent works,
+ *  a ring + ↗ badge that fire once when it sends a message. In compact mode the
+ *  status (dot, or the CLI star while busy) sits on its bottom corner. */
+function AgentAvatar({ name, accent, status, busy, sending, compact }: {
+  name: string; accent: AccentColorName; status: StatusKind; busy: boolean;
+  sending?: { key: number }; compact?: boolean;
+}) {
+  const size = 30;
+  return (
+    <div
+      className={busy ? 'cth-agent-breathe' : undefined}
+      style={{
+        position: 'relative', flexShrink: 0, width: size, height: size,
+        borderRadius: Math.round(size * 0.23),
+        ['--cth-agent-accent' as string]: `var(--cth-${accent})`
+      }}
+    >
+      <AgentMonogram name={name} accent={accent} size={size} />
+      {sending && (
+        <span
+          key={`ring-${sending.key}`}
+          aria-hidden
+          className="cth-agent-send-ring"
+          style={{
+            position: 'absolute', inset: 0, pointerEvents: 'none',
+            borderRadius: Math.round(size * 0.23),
+            boxShadow: `0 0 0 2px var(--cth-${accent})`
+          }}
+        />
+      )}
+      {sending && (
+        <span
+          key={`badge-${sending.key}`}
+          aria-hidden
+          className="cth-agent-send-badge"
+          style={{
+            position: 'absolute', top: -5, right: -5, pointerEvents: 'none',
+            width: 15, height: 15, borderRadius: '50%',
+            display: 'inline-flex', alignItems: 'center', justifyContent: 'center',
+            background: `var(--cth-${accent})`, color: 'var(--cth-monogram-bg)',
+            fontSize: 10, fontWeight: 700, lineHeight: 1,
+            boxShadow: '0 0 0 2px var(--cth-paper-100)'
+          }}
+        >↗</span>
+      )}
+      {compact && (
+        <span style={{
+          position: 'absolute', right: -4, bottom: -4,
+          minWidth: 13, height: 13, borderRadius: 7,
+          display: 'inline-flex', alignItems: 'center', justifyContent: 'center',
+          background: 'var(--cth-paper-100)'
+        }}>
+          {busy
+            ? <CliSpinner color={BUSY_COLOR[status]} style={{ width: 12, fontSize: 12 }} />
+            : <StatusDot status={status} />}
+        </span>
+      )}
+    </div>
+  );
 }
 
 const fmtK = (n: number): string => `${Math.round(n / 1000)}k`;
@@ -52,11 +127,13 @@ const fmtK = (n: number): string => `${Math.round(n / 1000)}k`;
 export function AgentCard({
   name, accent, status, ptyId, project, action, progress = 0,
   contextTokens, contextLimit, selected, isGod, onClick, onRename,
-  doingCount = 0, onTaskNoteClick, draggable, note, onEditNote
+  doingCount = 0, onTaskNoteClick, draggable, note, onEditNote, compact, sending
 }: AgentCardProps) {
   const { t } = useTranslation();
   const [hover, setHover] = useState(false);
   const typing = useHasTerminalDraft(ptyId);
+  const shownStatus: StatusKind = typing ? 'typing' : status;
+  const busy = !typing && BUSY.has(status);
   // Fork perso (Orca style): a borderless ROW, not a framed card. Selection is
   // a muted fill (identical on every agent, god included), hover a lighter one.
   // God is marked only by a quiet "boss" tag — no accent surface any more.
@@ -78,6 +155,41 @@ export function AgentCard({
   // One context line: what it's DOING while working, WHERE it lives while idle.
   const infoLine = (status !== 'idle' && action) ? action : project;
   const noteFirstLine = (note ?? '').split('\n').find((l) => l.trim()) ?? '';
+
+  if (compact) {
+    const tip = [
+      name,
+      t(`badge.${shownStatus}`),
+      status !== 'idle' && action ? action : '',
+      sending ? t('agentCard.sendingTo', { to: sending.toLabel }) : ''
+    ].filter(Boolean).join(' · ');
+    return (
+      <div
+        role="button"
+        tabIndex={0}
+        onClick={onClick}
+        onKeyDown={(event) => {
+          if (event.key === 'Enter' || event.key === ' ') { event.preventDefault(); onClick?.(); }
+        }}
+        onMouseEnter={() => setHover(true)}
+        onMouseLeave={() => setHover(false)}
+        draggable={draggable}
+        aria-current={selected ? 'true' : undefined}
+        aria-label={tip}
+        title={tip}
+        className="cth-titlebar-nodrag"
+        style={{
+          width: '100%', boxSizing: 'border-box',
+          display: 'flex', justifyContent: 'center',
+          padding: '7px 0', borderRadius: 'var(--cth-radius-md)',
+          background: rowBackground, cursor: 'pointer',
+          transition: 'background 120ms ease-out'
+        }}
+      >
+        <AgentAvatar name={name} accent={accent} status={shownStatus} busy={busy} sending={sending} compact />
+      </div>
+    );
+  }
 
   return (
     <div
@@ -107,7 +219,7 @@ export function AgentCard({
         transition: 'background 120ms ease-out'
       }}
     >
-      <AgentMonogram name={name} accent={accent} size={30} />
+      <AgentAvatar name={name} accent={accent} status={shownStatus} busy={busy} sending={sending} />
 
       <div style={{ flex: 1, display: 'flex', flexDirection: 'column', gap: 2, minWidth: 0 }}>
         {/* Identity row: name (+ boss tag) · tasks chip · status dot. */}
@@ -149,10 +261,29 @@ export function AgentCard({
             >✎ {doingCount}</span>
           )}
           {/* flexShrink:0 — truncation must land on the name, never on the status. */}
-          <StatusDot status={typing ? 'typing' : status} />
+          {busy
+            ? (
+              <span role="img" aria-label={t(`badge.${status}`)} title={t(`badge.${status}`)} style={{ flexShrink: 0, display: 'inline-flex' }}>
+                <CliSpinner color={BUSY_COLOR[status]} style={{ fontSize: 13 }} />
+              </span>
+            )
+            : <StatusDot status={shownStatus} />}
         </div>
 
-        {/* Context line: action while working, repo while idle. */}
+        {/* Context line: action while working, repo while idle — replaced for
+            a moment by "→ recipient · subject" right after a send. */}
+        {sending ? (
+          <div
+            key={`send-${sending.key}`}
+            className="cth-agent-send-line"
+            title={sending.subject ? `${t('agentCard.sendingTo', { to: sending.toLabel })} · ${sending.subject}` : t('agentCard.sendingTo', { to: sending.toLabel })}
+            style={{
+              fontSize: 11.5, lineHeight: '16px', fontWeight: 500,
+              color: `var(--cth-${accent})`,
+              whiteSpace: 'nowrap', overflow: 'hidden', textOverflow: 'ellipsis'
+            }}
+          >↗ {sending.toLabel}{sending.subject ? ` · ${sending.subject}` : ''}</div>
+        ) : (
         <div
           title={`${project}${action && status !== 'idle' ? ` — ${action}` : ''}`}
           style={{
@@ -161,6 +292,7 @@ export function AgentCard({
             whiteSpace: 'nowrap', overflow: 'hidden', textOverflow: 'ellipsis'
           }}
         >{infoLine}</div>
+        )}
 
         {/* The private note row — god included. */}
         <div
