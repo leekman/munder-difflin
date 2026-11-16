@@ -3750,8 +3750,13 @@ ipcMain.handle('scope:set', (evt, s: unknown) => {
   const c = scopeCtx(evt);
   if (!c || !s || typeof s !== 'object') return { ok: false, error: 'no floor repo' };
   try {
-    const { enabled, scope } = s as { enabled?: unknown; scope?: unknown };
-    writeFloorScope(c.home, c.repo, { enabled: enabled === true, scope: scope as string[] });
+    const { enabled, scope, teamId } = s as { enabled?: unknown; scope?: unknown; teamId?: unknown };
+    // teamId is validated (id regex) by writeFloorScope; absent/null clears it.
+    writeFloorScope(c.home, c.repo, {
+      enabled: enabled === true,
+      scope: scope as string[],
+      ...(teamId === undefined || teamId === null ? {} : { teamId: teamId as string })
+    });
     return { ok: true };
   } catch (e) {
     return { ok: false, error: e instanceof Error ? e.message : String(e) };

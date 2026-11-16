@@ -2,7 +2,7 @@
  * Monorepo scope + remembered teams, stored by MAIN under
  * `<home>/teams/<repoSlug>/`.
  *
- *   floor.json                                  { enabled, scope } for the floor
+ *   floor.json                                  { enabled, scope, teamId? } for the floor
  *   <scopeKey>/<createdAt-compact>-<id>.json    one remembered team
  *
  * Not in the roster: the renderer rewrites the whole roster and `RosterStore.write`
@@ -17,8 +17,10 @@ import { existsSync, mkdirSync, readFileSync, readdirSync, renameSync, rmSync, w
 import { join } from 'node:path';
 import { isSafeRelPath } from '../shared/hire';
 import { repoSlug } from './roster';
+import { MAX_SCOPE, TEAM_ID_RE } from '../shared/scopeLimits';
 
-export interface FloorScope { enabled: boolean; scope: string[] }
+/** `teamId` = the remembered team the floor's current team came from (resumed or composed). */
+export interface FloorScope { enabled: boolean; scope: string[]; teamId?: string }
 export interface SavedTeam {
   id: string; repoRoot: string; scope: string[]; summary: string;
   createdAt: string; usedAt: string;
@@ -26,10 +28,9 @@ export interface SavedTeam {
   queues: Record<string, unknown[]>;
 }
 
-const MAX_SCOPE = 40;
 const MAX_AGENTS = 50;
 const MAX_SUMMARY = 300;
-const ID_RE = /^[A-Za-z0-9-]{1,64}$/;
+const ID_RE = TEAM_ID_RE;
 
 /** Validated, de-duplicated, sorted copy of a scope. Throws on an unsafe path. */
 function cleanScope(scope: unknown): string[] {
@@ -67,7 +68,10 @@ export function readFloorScope(home: string, repoRoot: string): FloorScope | nul
   try {
     const v = JSON.parse(readFileSync(join(repoDir(home, repoRoot), 'floor.json'), 'utf8')) as Partial<FloorScope>;
     if (!v || typeof v.enabled !== 'boolean' || !Array.isArray(v.scope)) return null;
-    return { enabled: v.enabled, scope: cleanScope(v.scope) };
+    const out: FloorScope = { enabled: v.enabled, scope: cleanScope(v.scope) };
+    // A hand-edited or corrupted id is dropped, not trusted.
+    if (typeof v.teamId === 'string' && ID_RE.test(v.teamId)) out.teamId = v.teamId;
+    return out;
   } catch {
     return null;
   }
@@ -75,9 +79,10 @@ export function readFloorScope(home: string, repoRoot: string): FloorScope | nul
 
 export function writeFloorScope(home: string, repoRoot: string, s: FloorScope): void {
   const scope = cleanScope(s?.scope);
+  const teamId = s.teamId === undefined || s.teamId === null ? undefined : checkId(s.teamId);
   const dir = repoDir(home, repoRoot);
   mkdirSync(dir, { recursive: true });
-  atomicWrite(join(dir, 'floor.json'), { enabled: !!s.enabled, scope });
+  atomicWrite(join(dir, 'floor.json'), { enabled: !!s.enabled, scope, ...(teamId ? { teamId } : {}) });
 }
 
 /** Team file names in a scope folder, with the id parsed out of the name. */

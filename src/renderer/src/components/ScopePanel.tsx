@@ -1,5 +1,6 @@
 import { CSSProperties, useEffect, useMemo, useRef, useState } from 'react';
 import { useStore, floorRepo } from '@/store/store';
+import { MAX_SCOPE } from '@shared/scopeLimits';
 import { applyFloorScope } from '@/store/scopeActions';
 import { PixelPanel } from '@/components/PixelPanel';
 import { PixelButton } from '@/components/PixelButton';
@@ -7,7 +8,7 @@ import {
   countOpenTasks, planScopeSwitch, sameScope, splitMissing, type Subproject
 } from '@/components/scopeFlow';
 
-type Confirm = { names: { name: string; busy: boolean }[]; openTasks: number | null };
+type Confirm = { ids: string[]; names: { name: string; busy: boolean }[]; openTasks: number | null };
 
 /** « Périmètre » panel: monorepo toggle + sub-project selection of the floor. */
 export function ScopePanel({ onClose }: { onClose: () => void }) {
@@ -40,6 +41,7 @@ export function ScopePanel({ onClose }: { onClose: () => void }) {
   const target = { enabled, scope: enabled ? selected : [] };
   const changed = target.enabled !== current.enabled || !sameScope(target.scope, current.scope);
   const { missing } = splitMissing(selected, items);
+  const tooMany = enabled && selected.length > MAX_SCOPE;
 
   const groups = useMemo(() => {
     const q = filter.trim().toLowerCase();
@@ -54,22 +56,30 @@ export function ScopePanel({ onClose }: { onClose: () => void }) {
   const toggle = (path: string, on: boolean) =>
     setSelected((s) => (on ? [...s.filter((p) => p !== path), path] : s.filter((p) => p !== path)));
 
-  const run = async () => {
+  const run = async (ids: string[]) => {
     setBusy(true);
     setError('');
-    const r = await applyFloorScope(target);
+    const r = await applyFloorScope(target, ids);
     setBusy(false);
-    if (r.ok) onClose();
-    else { setConfirm(null); setError(r.error); }
+    if (r.ok) { onClose(); return; }
+    setConfirm(null);
+    if (r.stale) {
+      // The floor changed under the confirmation: show the new team and ask again.
+      await apply();
+      setError("L'équipe a changé : vérifie la liste avant de confirmer.");
+    } else {
+      setError(r.error);
+    }
   };
 
   const apply = async () => {
     const plan = planScopeSwitch(useStore.getState().agents);
-    if (sameScope(target.scope, current.scope) || !plan.needsConfirm) { void run(); return; }
+    const ids = plan.toPark.map((a) => a.id);
+    if (sameScope(target.scope, current.scope) || !plan.needsConfirm) { void run(ids); return; }
     const busyIds = new Set(plan.busy.map((a) => a.id));
     const names = [...plan.busy, ...plan.toPark.filter((a) => !busyIds.has(a.id))]
       .map((a) => ({ name: a.name, busy: busyIds.has(a.id) }));
-    setConfirm({ names, openTasks: null });
+    setConfirm({ ids, names, openTasks: null });
     try {
       const n = countOpenTasks(await window.cth.hiveTasks(), plan.toPark.map((a) => a.id));
       setConfirm((c) => (c ? { ...c, openTasks: n } : c));
@@ -143,17 +153,22 @@ export function ScopePanel({ onClose }: { onClose: () => void }) {
                 </div>
               </>
             )}
+            {tooMany && !confirm && (
+              <span style={{ fontSize: 12, color: 'var(--cth-danger)' }}>
+                {`Au plus ${MAX_SCOPE} sous-projets par périmètre (${selected.length} cochés).`}
+              </span>
+            )}
             {error && <span style={{ fontSize: 12, color: 'var(--cth-danger)' }}>{error}</span>}
             <div style={{ display: 'flex', justifyContent: 'flex-end', gap: 8 }}>
               <PixelButton variant="secondary" size="md" disabled={busy} onClick={confirm ? () => setConfirm(null) : onClose}>
                 Annuler
               </PixelButton>
               {confirm ? (
-                <PixelButton variant="primary" size="md" disabled={busy} onClick={() => void run()}>
+                <PixelButton variant="primary" size="md" disabled={busy} onClick={() => void run(confirm.ids)}>
                   {busy ? 'Mise de côté…' : 'Mettre de côté et appliquer'}
                 </PixelButton>
               ) : (
-                <PixelButton variant="primary" size="md" disabled={!changed || busy} onClick={() => void apply()}>
+                <PixelButton variant="primary" size="md" disabled={!changed || busy || tooMany} onClick={() => void apply()}>
                   {busy ? 'Application…' : 'Appliquer'}
                 </PixelButton>
               )}

@@ -195,6 +195,10 @@ interface State {
   /** Équipe enregistrée d'où vient l'équipe courante (reprise ou composée), sinon null. */
   currentTeamId: string | null;
   setCurrentTeamId: (id: string | null) => void;
+  /** Comme `setCurrentTeamId`, et l'écrit aussi dans floor.json (main) pour
+   *  survivre à un rechargement. À appeler quand l'équipe courante change
+   *  (reprise, composition enregistrée, oubli). */
+  setCurrentTeam: (id: string | null) => Promise<void>;
   /** Équipes mémorisées du périmètre courant (plus récemment utilisée d'abord). */
   knownTeams: SavedTeam[];
   setKnownTeams: (teams: SavedTeam[]) => void;
@@ -707,6 +711,16 @@ export const useStore = create<State>((set, get) => ({
   setFloorScope: (floorScope) => set({ floorScope }),
   currentTeamId: null,
   setCurrentTeamId: (currentTeamId) => set({ currentTeamId }),
+  setCurrentTeam: async (id) => {
+    set({ currentTeamId: id });
+    const fs = get().floorScope;
+    if (!fs) return;
+    try {
+      await window.cth.scopeSet({ enabled: fs.enabled, scope: fs.scope, ...(id ? { teamId: id } : {}) });
+    } catch (e) {
+      console.warn('[scope] could not persist the current team', e);
+    }
+  },
   knownTeams: [],
   setKnownTeams: (knownTeams) => set({ knownTeams }),
   scopeNotice: null,

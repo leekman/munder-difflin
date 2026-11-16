@@ -49,7 +49,7 @@ export function KnownTeamCard({ scopeName, config }: { scopeName: string; config
     const st = useStore.getState();
     try {
       await window.cth.teamsForget(team.scope, team.id);
-      if (st.currentTeamId === team.id) st.setCurrentTeamId(null);
+      if (st.currentTeamId === team.id) await st.setCurrentTeam(null);
       st.setKnownTeams(await window.cth.teamsList(team.scope));
     } catch (e) {
       setError(e instanceof Error ? e.message : String(e));

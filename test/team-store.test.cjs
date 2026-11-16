@@ -94,3 +94,21 @@ test('validation and corrupted files', () => {
   assert.ok(ids.includes(ok.id));
   assert.equal(ids.length, 2);
 });
+
+test('floor scope keeps a valid teamId and clears it when absent', () => {
+  const home = tmpHome();
+  writeFloorScope(home, REPO, { enabled: true, scope: ['core'], teamId: 'abc-123' });
+  assert.deepEqual(readFloorScope(home, REPO), { enabled: true, scope: ['core'], teamId: 'abc-123' });
+  writeFloorScope(home, REPO, { enabled: true, scope: ['core'] });
+  assert.deepEqual(readFloorScope(home, REPO), { enabled: true, scope: ['core'] });
+});
+
+test('floor scope rejects a bad teamId on write and drops it on read', () => {
+  const home = tmpHome();
+  assert.throws(() => writeFloorScope(home, REPO, { enabled: true, scope: [], teamId: '../evil' }), /invalid team id/);
+  assert.throws(() => writeFloorScope(home, REPO, { enabled: true, scope: [], teamId: 42 }), /invalid team id/);
+  const file = path.join(home, 'teams', repoSlug(REPO), 'floor.json');
+  fs.mkdirSync(path.dirname(file), { recursive: true });
+  fs.writeFileSync(file, JSON.stringify({ enabled: true, scope: [], teamId: 'bad id!' }));
+  assert.deepEqual(readFloorScope(home, REPO), { enabled: true, scope: [] });
+});

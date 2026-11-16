@@ -1281,8 +1281,8 @@ const api = {
     truncated: boolean; rootHasManifest: boolean;
   }> => ipcRenderer.invoke('floor:subprojects', refresh ? { refresh: true } : undefined),
   /** Monorepo scope of this floor (stored by main). */
-  scopeGet: (): Promise<{ enabled: boolean; scope: string[] } | null> => ipcRenderer.invoke('scope:get'),
-  scopeSet: (s: { enabled: boolean; scope: string[] }): Promise<{ ok: boolean; error?: string }> => ipcRenderer.invoke('scope:set', s),
+  scopeGet: (): Promise<{ enabled: boolean; scope: string[]; teamId?: string } | null> => ipcRenderer.invoke('scope:get'),
+  scopeSet: (s: { enabled: boolean; scope: string[]; teamId?: string }): Promise<{ ok: boolean; error?: string }> => ipcRenderer.invoke('scope:set', s),
   /** Remembered teams for a scope, most recently used first. */
   teamsList: (scope: string[]): Promise<SavedTeamInfo[]> => ipcRenderer.invoke('teams:list', scope),
   teamsSave: (t: { id?: string; scope: string[]; summary: string; agents: unknown[]; queues: Record<string, unknown[]> }):

@@ -92,12 +92,13 @@ function fakeDeps({ agents: list, ...over } = {}) {
 
 const FROM = { enabled: true, scope: ['packages/services/live'] };
 const TO = { enabled: true, scope: ['packages/sdk/php'] };
+const ALL = ['jim', 'pam', 'ghost'];
 
 test('switchScope aborts without parking when save fails', async () => {
   const { deps, calls } = fakeDeps({
     teamsSave: async () => { calls.push('teamsSave'); return { ok: false, error: 'disk full' }; }
   });
-  const r = await switchScope(deps, FROM, TO, '');
+  const r = await switchScope(deps, FROM, TO, '', ALL);
   assert.deepEqual(r, { ok: false, error: 'disk full' });
   assert.deepEqual(calls, ['teamsSave']);
 });
@@ -106,7 +107,7 @@ test('switchScope aborts when save throws', async () => {
   const { deps, calls } = fakeDeps({
     teamsSave: async () => { calls.push('teamsSave'); throw new Error('ipc gone'); }
   });
-  const r = await switchScope(deps, FROM, TO, '');
+  const r = await switchScope(deps, FROM, TO, '', ALL);
   assert.equal(r.ok, false);
   assert.match(r.error, /ipc gone/);
   assert.deepEqual(calls, ['teamsSave']);
@@ -114,8 +115,8 @@ test('switchScope aborts when save throws', async () => {
 
 test('switchScope saves before parking', async () => {
   const { deps, calls } = fakeDeps();
-  const r = await switchScope(deps, FROM, TO, 'Front + back');
-  assert.deepEqual(r, { ok: true, known: [{ id: 'K1' }] });
+  const r = await switchScope(deps, FROM, TO, 'Front + back', ALL);
+  assert.deepEqual(r, { ok: true, known: [{ id: 'K1' }], notParked: [] });
   assert.deepEqual(calls, ['teamsSave', 'parkPty:pty-jim', 'parkPty:pty-pam', 'parkAgents:jim,pam,ghost', 'scopeSet', 'teamsList']);
   assert.deepEqual(deps.saved.scope, FROM.scope);
   assert.equal(deps.saved.summary, 'Front + back');
@@ -129,28 +130,69 @@ test('switchScope saves before parking', async () => {
 
 test('switchScope reuses currentTeamId and falls back to a local summary', async () => {
   const { deps } = fakeDeps({ currentTeamId: 'T0' });
-  await switchScope(deps, FROM, TO, '  ');
+  await switchScope(deps, FROM, TO, '  ', ALL);
   assert.equal(deps.saved.id, 'T0');
   assert.equal(deps.saved.summary, '3 agents : jim — desc jim ; pam — desc pam ; ghost — desc ghost');
 });
 
 test('switchScope with no agents skips save', async () => {
   const { deps, calls } = fakeDeps({ agents: [agent('god', { isGod: true })] });
-  const r = await switchScope(deps, FROM, TO, '');
+  const r = await switchScope(deps, FROM, TO, '', []);
   assert.equal(r.ok, true);
   assert.deepEqual(calls, ['parkAgents:', 'scopeSet', 'teamsList']);
 });
 
 test('switchScope with no agents forgets a never-launched current team', async () => {
   const { deps, calls } = fakeDeps({ agents: [agent('god', { isGod: true })], currentTeamId: 'T0' });
-  await switchScope(deps, FROM, TO, '');
+  await switchScope(deps, FROM, TO, '', []);
   assert.deepEqual(calls, ['teamsForget:T0', 'parkAgents:', 'scopeSet', 'teamsList']);
 });
 
-test('switchScope reports a scopeSet failure', async () => {
-  const { deps } = fakeDeps({ scopeSet: async () => ({ ok: false, error: 'bad scope' }) });
-  const r = await switchScope(deps, FROM, TO, '');
-  assert.deepEqual(r, { ok: false, error: 'bad scope' });
+test('switchScope: scopeSet failure after parking offers the just-saved team', async () => {
+  const listed = [];
+  const { deps } = fakeDeps({
+    scopeSet: async () => ({ ok: false, error: 'bad scope' }),
+    teamsList: async (scope) => { listed.push(scope); return [{ id: 'T1' }]; }
+  });
+  const r = await switchScope(deps, FROM, TO, '', ALL);
+  assert.deepEqual(r, { ok: false, error: 'bad scope', known: [{ id: 'T1' }] });
+  assert.deepEqual(listed, [FROM.scope]);
+});
+
+test('switchScope refuses when the team changed since the confirmation', async () => {
+  const { deps, calls } = fakeDeps();
+  const r = await switchScope(deps, FROM, TO, '', ['jim', 'pam']);
+  assert.equal(r.ok, false);
+  assert.equal(r.stale, true);
+  assert.deepEqual(calls, []);
+});
+
+test('switchScope keeps on the floor an agent whose PTY could not be parked', async () => {
+  const saves = [];
+  const { deps, calls } = fakeDeps({
+    parkPty: async (id) => { calls.push(`parkPty:${id}`); return id === 'pty-pam' ? { ok: false, error: 'no' } : { ok: true }; },
+    teamsSave: async (t) => { calls.push('teamsSave'); saves.push(t); return { ok: true, team: { id: 'T1' } }; },
+    queues: () => ({ jim: [{ id: 'q1' }], pam: [{ id: 'q2' }] })
+  });
+  const r = await switchScope(deps, FROM, TO, 'S', ALL);
+  assert.deepEqual(r, { ok: true, known: [{ id: 'K1' }], notParked: ['pam'] });
+  assert.deepEqual(calls, [
+    'teamsSave', 'parkPty:pty-jim', 'parkPty:pty-pam', 'teamsSave', 'parkAgents:jim,ghost', 'scopeSet', 'teamsList'
+  ]);
+  // Re-saved under the same id without pam nor its queue.
+  assert.equal(saves[1].id, 'T1');
+  assert.deepEqual(saves[1].agents.map((a) => a.id), ['jim', 'ghost']);
+  assert.deepEqual(saves[1].queues, { jim: [{ id: 'q1' }] });
+});
+
+test('switchScope: a throwing parkPty counts as not parked; nobody parked forgets a new team', async () => {
+  const { deps, calls } = fakeDeps({
+    agents: [agent('jim', { ptyId: 'pty-jim' })],
+    parkPty: async (id) => { calls.push(`parkPty:${id}`); throw new Error('ipc'); }
+  });
+  const r = await switchScope(deps, FROM, TO, '', ['jim']);
+  assert.deepEqual(r.notParked, ['jim']);
+  assert.deepEqual(calls, ['teamsSave', 'parkPty:pty-jim', 'teamsForget:T1', 'parkAgents:', 'scopeSet', 'teamsList']);
 });
 
 test('localSummary lists agents and truncates to 300', () => {
@@ -167,9 +209,11 @@ test('countOpenTasks counts non-done tasks assigned to the given agents', () => 
     { id: '2', status: 'todo', assignee: 'pam' },
     { id: '3', status: 'done', assignee: 'jim' },
     { id: '4', status: 'blocked', assignee: 'god' },
-    { id: '5', status: 'todo' }
+    { id: '5', status: 'todo' },
+    { id: '6', status: 'blocked', assignee: 'jim' },
+    { id: '7', status: 'archived', assignee: 'jim' }
   ] };
-  assert.equal(countOpenTasks(raw, ['jim', 'pam']), 2);
+  assert.equal(countOpenTasks(raw, ['jim', 'pam']), 3);
   assert.equal(countOpenTasks(null, ['jim']), 0);
   assert.equal(countOpenTasks({ tasks: 'nope' }, ['jim']), 0);
 });
