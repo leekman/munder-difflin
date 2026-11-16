@@ -4,6 +4,11 @@ import type { HireManifest } from '../shared/hire';
 import type { TeamPromptInput, TeamResponse } from '../shared/teamPrompt';
 export type { TeamPromptInput, TeamResponse } from '../shared/teamPrompt';
 export type { HireManifest } from '../shared/hire';
+/** A remembered team as main stores it (agents are the renderer's opaque PersistedAgent). */
+export interface SavedTeamInfo {
+  id: string; repoRoot: string; scope: string[]; summary: string; createdAt: string; usedAt: string;
+  agents: unknown[]; queues: Record<string, unknown[]>;
+}
 import type { IntegrationRecord, IntegrationTemplate } from '../shared/integrations';
 export type { IntegrationRecord, IntegrationTemplate } from '../shared/integrations';
 import type { UpdateStatus } from '../shared/updateState';
@@ -1271,6 +1276,15 @@ const api = {
     items: Array<{ path: string; label: string; group: string; kinds: string[] }>;
     truncated: boolean; rootHasManifest: boolean;
   }> => ipcRenderer.invoke('floor:subprojects', refresh ? { refresh: true } : undefined),
+  /** Monorepo scope of this floor (stored by main). */
+  scopeGet: (): Promise<{ enabled: boolean; scope: string[] } | null> => ipcRenderer.invoke('scope:get'),
+  scopeSet: (s: { enabled: boolean; scope: string[] }): Promise<{ ok: boolean; error?: string }> => ipcRenderer.invoke('scope:set', s),
+  /** Remembered teams for a scope, most recently used first. */
+  teamsList: (scope: string[]): Promise<SavedTeamInfo[]> => ipcRenderer.invoke('teams:list', scope),
+  teamsSave: (t: { id?: string; scope: string[]; summary: string; agents: unknown[]; queues: Record<string, unknown[]> }):
+    Promise<{ ok: true; team: SavedTeamInfo } | { ok: false; error: string }> => ipcRenderer.invoke('teams:save', t),
+  teamsTouch: (scope: string[], id: string): Promise<void> => ipcRenderer.invoke('teams:touch', scope, id),
+  teamsForget: (scope: string[], id: string): Promise<boolean> => ipcRenderer.invoke('teams:forget', scope, id),
   /** Compose the team: hidden read-only analysis of the repo (main supplies the model). */
   teamAnalyze: (input: Omit<TeamPromptInput, 'defaultModel'>): Promise<TeamResponse> =>
     ipcRenderer.invoke('team:analyze', input),

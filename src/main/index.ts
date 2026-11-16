@@ -24,6 +24,7 @@ import {
   addWorktree, removeWorktree, worktreeHasUnintegratedWork, worktreeIsGcSafe,
   getLogGraph, getCommitFiles, getFileAtRev, compareRefs, listWorktrees, checkoutRef
 } from './git';
+import { readFloorScope, writeFloorScope, listTeams, saveTeam, touchTeam, forgetTeam } from './teamStore';
 import { detectSubprojects, rootHasManifest, type Subproject } from './subprojects';
 import { resolveProjectInfo, type ProjectInfo } from './projectInfo';
 import { linkWorktreeDeps, unlinkWorktreeDeps } from './worktreeDeps';
@@ -3696,6 +3697,52 @@ ipcMain.handle('floor:subprojects', async (evt, arg: unknown) => {
   if (!repo) return { items: [], truncated: false, rootHasManifest: true };
   const refresh = !!arg && typeof arg === 'object' && (arg as { refresh?: unknown }).refresh === true;
   return subprojectsOf(repo, refresh);
+});
+/** Scope/teams storage: repo is always the sender's floor, scope validated in teamStore. */
+function scopeCtx(evt: Electron.IpcMainInvokeEvent): { repo: string; home: string } | null {
+  const repo = teamRepoOf(evt.sender);
+  const home = readConfig().harnessHome;
+  return repo && home ? { repo, home } : null;
+}
+ipcMain.handle('scope:get', (evt) => {
+  const c = scopeCtx(evt);
+  return c ? readFloorScope(c.home, c.repo) : null;
+});
+ipcMain.handle('scope:set', (evt, s: unknown) => {
+  const c = scopeCtx(evt);
+  if (!c || !s || typeof s !== 'object') return { ok: false, error: 'no floor repo' };
+  try {
+    const { enabled, scope } = s as { enabled?: unknown; scope?: unknown };
+    writeFloorScope(c.home, c.repo, { enabled: enabled === true, scope: scope as string[] });
+    return { ok: true };
+  } catch (e) {
+    return { ok: false, error: e instanceof Error ? e.message : String(e) };
+  }
+});
+ipcMain.handle('teams:list', (evt, scope: unknown) => {
+  const c = scopeCtx(evt);
+  if (!c) return [];
+  try { return listTeams(c.home, c.repo, scope as string[]); } catch { return []; }
+});
+ipcMain.handle('teams:save', (evt, raw: unknown) => {
+  const c = scopeCtx(evt);
+  if (!c) return { ok: false, error: 'no floor repo' };
+  try {
+    if (!raw || typeof raw !== 'object') throw new Error('invalid team');
+    return { ok: true, team: saveTeam(c.home, c.repo, raw as Parameters<typeof saveTeam>[2]) };
+  } catch (e) {
+    return { ok: false, error: e instanceof Error ? e.message : String(e) };
+  }
+});
+ipcMain.handle('teams:touch', (evt, scope: unknown, id: unknown) => {
+  const c = scopeCtx(evt);
+  if (!c) return;
+  try { touchTeam(c.home, c.repo, scope as string[], id as string); } catch { /* invalid input: ignore */ }
+});
+ipcMain.handle('teams:forget', (evt, scope: unknown, id: unknown) => {
+  const c = scopeCtx(evt);
+  if (!c) return false;
+  try { return forgetTeam(c.home, c.repo, scope as string[], id as string); } catch { return false; }
 });
 ipcMain.handle('team:analyze', async (evt, raw: unknown) => {
   const repo = teamRepoOf(evt.sender);
