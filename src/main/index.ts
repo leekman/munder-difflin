@@ -504,7 +504,6 @@ function teardownPty(id: string, opts: { keepWorktree?: boolean } = {}): void {
     worktreePaths.delete(id);
     worktreeOrigins.delete(id);
     worktreeSubdirs.delete(id);
-    liveWorkers.delete(id);
   } else if (wtPath) {
     const origCwd = worktreeOrigins.get(id) ?? wtPath;
     worktreePaths.delete(id);
