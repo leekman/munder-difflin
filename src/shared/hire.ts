@@ -187,11 +187,11 @@ function normalizeRelPath(p: string): string | null {
 }
 
 /** True when `p` is a safe repo-relative path: no `\\`, no `:`, no leading `/`,
- *  no `..` segment, and non-empty. Answers on the raw string after the same
+ *  no `..` segment, no control character, and non-empty. Answers on the raw string after the same
  *  normalisation the manifest value gets (`./a` and `a/` are both fine). Pure. */
 export function isSafeRelPath(p: string): boolean {
   if (typeof p !== 'string') return false;
-  if (p.includes('\\') || p.includes(':') || p.startsWith('/')) return false;
+  if (p.includes('\\') || p.includes(':') || p.startsWith('/') || /[\x00-\x1f\x7f]/.test(p)) return false;
   const n = normalizeRelPath(p);
   return n !== null && !n.split('/').includes('..');
 }
@@ -358,7 +358,7 @@ export function validateHireManifest(raw: unknown): HireValidation {
 
   // workdir — optional repo-relative sub-directory, normalised
   let workdir: string | undefined;
-  if (o.workdir !== undefined) {
+  if (o.workdir !== undefined && o.workdir !== null) {
     if (!str(o.workdir)) errors.push('"workdir" must be a string');
     else {
       const w = o.workdir.trim();

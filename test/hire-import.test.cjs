@@ -123,7 +123,7 @@ test('workdir: normalises a leading ./ and a trailing slash', () => {
 });
 
 test('workdir: unsafe or malformed values are rejected with a "workdir" error', () => {
-  const bad = ['../x', 'a/../../b', '/abs', 'C:\\x', 'a\\b', '', '.', './', 'x'.repeat(201), 42, null, ['a']];
+  const bad = ['../x', 'a/../../b', '/abs', 'C:\\x', 'a\\b', '', '.', './', 'x'.repeat(201), 42, ['a'], 'a\u0000b'];
   for (const workdir of bad) {
     const r = validateHireManifest({ ...manifest('Jim'), workdir });
     assert.equal(r.ok, false, `should reject ${JSON.stringify(workdir)}`);
@@ -133,5 +133,11 @@ test('workdir: unsafe or malformed values are rejected with a "workdir" error', 
 
 test('isSafeRelPath answers on the raw string after normalisation', () => {
   for (const ok of ['a', 'a/b', './a', 'a/b/', 'a.b/c-d']) assert.equal(isSafeRelPath(ok), true, ok);
-  for (const ko of ['', '.', '..', '../x', 'a/../b', '/abs', 'C:\\x', 'a\\b', 'a:b']) assert.equal(isSafeRelPath(ko), false, ko);
+  for (const ko of ['', '.', '..', '../x', 'a/../b', '/abs', 'C:\\x', 'a\\b', 'a:b', 'a\u0000b', 'a\nb', 'a\x7fb']) assert.equal(isSafeRelPath(ko), false, ko);
+});
+
+test('workdir: null is treated as absent', () => {
+  const r = validateHireManifest({ ...manifest('Jim'), workdir: null });
+  assert.equal(r.ok, true, r.errors.join('; '));
+  assert.equal(r.manifest.workdir, undefined);
 });
