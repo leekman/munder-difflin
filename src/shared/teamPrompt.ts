@@ -21,6 +21,7 @@ import { EFFORT_LEVELS, effortLevelsFor } from './effort';
 const MAX_ANALYSIS = 6000;
 const MAX_QUESTIONS = 3;
 const MAX_WHY = 200;
+const MAX_TEAM_SUMMARY = 300;
 
 export interface TeamPromptInput {
   repoRoot: string;
@@ -32,11 +33,13 @@ export interface TeamPromptInput {
   round: 1 | 2;
   analysis?: string;
   answers?: { question: string; answer: string }[];
+  /** Sub-project paths (relative to repoRoot) the analysis is restricted to. */
+  scope?: string[];
 }
 
 export type TeamResponse =
   | { kind: 'questions'; analysis: string; questions: string[] }
-  | { kind: 'agents'; agents: { manifest: HireManifest; why: string }[]; invalid: { name?: string; errors: string[] }[] }
+  | { kind: 'agents'; agents: { manifest: HireManifest; why: string }[]; teamSummary?: string; invalid: { name?: string; errors: string[] }[] }
   | { kind: 'error'; error: string };
 
 /** Model/effort guidance + the hire@1 field spec, shared by the team and the
@@ -114,6 +117,12 @@ export function buildTeamPrompt(input: TeamPromptInput): string {
     ''
   );
 
+  if (input.scope && input.scope.length > 0) {
+    lines.push(
+      `PÉRIMÈTRE : Analyse UNIQUEMENT ces sous-projets (chemins relatifs à la racine) : ${input.scope.join(', ')}. Tu peux lire la configuration partagée de la racine si elle les concerne. Pour chaque agent, renseigne "workdir" = le sous-projet où il travaille, ou omets-le pour un agent transverse au périmètre.`,
+      ''
+    );
+  }
   pushExistingAgents(lines, input.existingAgents);
   pushModelAndSpec(lines, input, 'CHAQUE agent');
 
@@ -121,7 +130,7 @@ export function buildTeamPrompt(input: TeamPromptInput): string {
     lines.push(
       'FORMAT DE SORTIE : réponds UNIQUEMENT par un objet JSON strict (pas de texte autour), de l\'une de ces deux formes :',
       `1. Si des questions à l'utilisateur sont vraiment utiles (0 à ${MAX_QUESTIONS} maximum) : {"analysis": "<résumé de ton analyse du projet, ≤ ${MAX_ANALYSIS} caractères>", "questions": ["...", "..."]}`,
-      '2. Sinon, directement : {"agents": [ { manifeste hire@1 + "why" }, ... ]}',
+      '2. Sinon, directement : {"teamSummary": "<résumé de l\'équipe en une phrase, ≤ 300 caractères>", "agents": [ { manifeste hire@1 + "why" }, ... ]}',
       `Propose ${TEAM_SIZE_RULE} L'équipe inclut un QA / Reviewer.`
     );
   } else {
@@ -136,7 +145,7 @@ export function buildTeamPrompt(input: TeamPromptInput): string {
     for (const a of answers) lines.push(`- Q : ${a.question}`, `  R : ${a.answer}`);
     lines.push(
       '',
-      'FORMAT DE SORTIE : réponds UNIQUEMENT par un objet JSON strict (pas de texte autour) : {"agents": [ { manifeste hire@1 + "why" }, ... ]}. Ne pose plus de questions.',
+      'FORMAT DE SORTIE : réponds UNIQUEMENT par un objet JSON strict (pas de texte autour) : {"teamSummary": "<résumé de l\'équipe en une phrase, ≤ 300 caractères>", "agents": [ { manifeste hire@1 + "why" }, ... ]}. Ne pose plus de questions.',
       `Propose ${TEAM_SIZE_RULE} L'équipe inclut un QA / Reviewer.`
     );
   }
@@ -238,7 +247,8 @@ export function parseTeamResponse(text: string): TeamResponse {
         invalid.push({ name: typeof n === 'string' ? n : undefined, errors: v.errors });
       }
     }
-    return { kind: 'agents', agents, invalid };
+    const ts = typeof o.teamSummary === 'string' ? o.teamSummary.trim().slice(0, MAX_TEAM_SUMMARY) : '';
+    return { kind: 'agents', agents, ...(ts ? { teamSummary: ts } : {}), invalid };
   }
 
   if (Array.isArray(o.questions) || typeof o.analysis === 'string') {

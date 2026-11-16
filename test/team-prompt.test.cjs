@@ -123,3 +123,42 @@ test('the agent draft prompt carries the request, the repo, existing agents and 
   const noRepo = buildAgentDraftPrompt({ repoRoot: null, request: 'x', existingAgents: [] });
   assert.ok(!noRepo.includes('LECTURE SEULE'));
 });
+
+const fs = require('node:fs');
+const path = require('node:path');
+const SUMMARY_FMT = '{"teamSummary": "<résumé de l\'équipe en une phrase, ≤ 300 caractères>", "agents": [';
+
+test('buildTeamPrompt with scope lists each path and restricts analysis', () => {
+  const p = buildTeamPrompt({ ...base, round: 1, scope: ['packages/a', 'apps/web'] });
+  assert.ok(p.includes('Analyse UNIQUEMENT ces sous-projets'));
+  assert.ok(p.includes('packages/a') && p.includes('apps/web'));
+  assert.ok(p.includes('workdir'));
+});
+
+test('buildTeamPrompt without scope is unchanged (apart from the teamSummary format)', () => {
+  const input = { repoRoot: '/work/repo', existingAgents: [{ name: 'Jim', description: 'QA' }], defaultModel: 'm1', models: { claude: ['a', 'b'] }, analysis: 'AN', answers: [{ question: 'Q', answer: 'R' }] };
+  for (const round of [1, 2]) {
+    const snap = fs.readFileSync(path.join(__dirname, 'fixtures', `team-prompt-noscope-r${round}.txt`), 'utf8');
+    for (const scope of [undefined, []]) {
+      const out = buildTeamPrompt({ ...input, round, scope }).split(SUMMARY_FMT).join('{"agents": [');
+      assert.equal(out, snap);
+    }
+    assert.ok(!snap.includes('PÉRIMÈTRE'));
+  }
+});
+
+test('the prompt asks for teamSummary in round 1 (agents form) and round 2', () => {
+  for (const round of [1, 2]) {
+    const p = buildTeamPrompt({ ...base, round });
+    assert.ok(p.includes(SUMMARY_FMT), `round ${round}`);
+  }
+});
+
+test('parseTeamResponse keeps teamSummary capped at 300; absent → undefined', () => {
+  const mk = (extra) => JSON.stringify({ ...extra, agents: [{ spec: 'munder-difflin/hire@1', name: 'Jim', why: 'x' }] });
+  const a = parseTeamResponse(mk({ teamSummary: '  ' + 'x'.repeat(400) + '  ' }));
+  assert.equal(a.kind, 'agents');
+  assert.equal(a.teamSummary.length, 300);
+  assert.equal(parseTeamResponse(mk({})).teamSummary, undefined);
+  assert.equal(parseTeamResponse(mk({ teamSummary: 42 })).teamSummary, undefined);
+});

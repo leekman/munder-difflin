@@ -4,7 +4,7 @@ import {
   buildAgentDraftPrompt, buildTeamPrompt, parseTeamResponse, MAX_AGENT_REQUEST, TEAM_SIZE,
   type AgentDraftInput, type TeamPromptInput, type TeamResponse
 } from '../shared/teamPrompt';
-import { HIRE_LIMITS, HIRE_PROVIDERS, validateHireManifest, type HireManifest } from '../shared/hire';
+import { HIRE_LIMITS, HIRE_PROVIDERS, isSafeRelPath, validateHireManifest, type HireManifest } from '../shared/hire';
 import { repoSlug } from './roster';
 
 export type TeamRunner = (prompt: string) => Promise<{ ok: boolean; text?: string; error?: string }>;
@@ -54,12 +54,18 @@ export const TEAM_INPUT_CAPS = {
   answers: 3,
   answerChars: 2000,
   analysisChars: 6000,
-  manifests: TEAM_SIZE.max
+  manifests: TEAM_SIZE.max,
+  scope: 40
 } as const;
 
 /** Untrusted renderer input → a bounded TeamPromptInput for `repoRoot` (the
  *  sender's bound floor repo, never the path the renderer sent). */
-export function sanitizeTeamInput(raw: unknown, repoRoot: string, defaultModel?: string): TeamPromptInput | null {
+export function sanitizeTeamInput(
+  raw: unknown,
+  repoRoot: string,
+  defaultModel?: string,
+  allowedScope?: ReadonlySet<string>
+): TeamPromptInput | null {
   if (typeof raw !== 'object' || raw === null) return null;
   const C = TEAM_INPUT_CAPS;
   const o = raw as Partial<TeamPromptInput>;
@@ -92,8 +98,15 @@ export function sanitizeTeamInput(raw: unknown, repoRoot: string, defaultModel?:
       if (ids.length > 0) models[p] = ids;
     }
   }
+  // Scope: safe relative paths that are known sub-projects, deduped, sorted, capped.
+  const scopeList = Array.isArray(o.scope)
+    ? [...new Set(o.scope.filter((p): p is string => typeof p === 'string' && isSafeRelPath(p) && (!allowedScope || allowedScope.has(p))))]
+        .sort()
+        .slice(0, C.scope)
+    : [];
   return {
     repoRoot, existingAgents, round, models,
+    scope: scopeList.length > 0 ? scopeList : undefined,
     analysis: typeof o.analysis === 'string' ? o.analysis.slice(0, C.analysisChars) : undefined,
     answers,
     defaultModel

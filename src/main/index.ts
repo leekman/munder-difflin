@@ -3679,24 +3679,28 @@ function teamRepoOf(sender: Electron.WebContents): string | null {
   const root = floors.repoOf(sender.id);
   return root && existsSync(root) ? root : null;
 }
-function teamInput(raw: unknown, repoRoot: string): TeamPromptInput | null {
-  return sanitizeTeamInput(raw, repoRoot, readConfig().defaultModel ?? undefined);
-}
 const subprojectsCache = new Map<string, { items: Subproject[]; truncated: boolean; rootHasManifest: boolean }>();
-ipcMain.handle('floor:subprojects', async (evt, arg: unknown) => {
-  const repo = teamRepoOf(evt.sender);
-  if (!repo) return { items: [], truncated: false, rootHasManifest: true };
-  const refresh = !!arg && typeof arg === 'object' && (arg as { refresh?: unknown }).refresh === true;
+async function subprojectsOf(repo: string, refresh = false): Promise<{ items: Subproject[]; truncated: boolean; rootHasManifest: boolean }> {
   const hit = refresh ? undefined : subprojectsCache.get(repo);
   if (hit) return hit;
   const res = { ...(await detectSubprojects(repo)), rootHasManifest: rootHasManifest(repo) };
   subprojectsCache.set(repo, res);
   return res;
+}
+async function teamInput(raw: unknown, repoRoot: string): Promise<TeamPromptInput | null> {
+  const allowedScope = new Set((await subprojectsOf(repoRoot)).items.map((i) => i.path));
+  return sanitizeTeamInput(raw, repoRoot, readConfig().defaultModel ?? undefined, allowedScope);
+}
+ipcMain.handle('floor:subprojects', async (evt, arg: unknown) => {
+  const repo = teamRepoOf(evt.sender);
+  if (!repo) return { items: [], truncated: false, rootHasManifest: true };
+  const refresh = !!arg && typeof arg === 'object' && (arg as { refresh?: unknown }).refresh === true;
+  return subprojectsOf(repo, refresh);
 });
 ipcMain.handle('team:analyze', async (evt, raw: unknown) => {
   const repo = teamRepoOf(evt.sender);
   if (!repo) return { kind: 'error', error: 'no floor repo' };
-  const input = teamInput(raw, repo);
+  const input = await teamInput(raw, repo);
   if (!input) return { kind: 'error', error: 'invalid input' };
   if (teamAnalyses.has(repo)) return { kind: 'error', error: 'analysis already running' };
   const ctl = new AbortController();
@@ -3755,7 +3759,7 @@ ipcMain.handle('team:cancel', async (evt) => {
 });
 ipcMain.handle('team:prompt', async (evt, raw: unknown) => {
   const repo = teamRepoOf(evt.sender);
-  const input = repo ? teamInput(raw, repo) : null;
+  const input = repo ? await teamInput(raw, repo) : null;
   return input ? buildTeamPrompt(input) : '';
 });
 ipcMain.handle('team:write', async (evt, _repo: unknown, manifests: unknown) => {

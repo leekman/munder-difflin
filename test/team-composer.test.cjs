@@ -88,7 +88,7 @@ test('runHiddenClaude honours an abort signal', () => {
 
 test('sanitizeTeamInput caps every renderer-supplied field', () => {
   const { sanitizeTeamInput, TEAM_INPUT_CAPS: C } = loadTs('src/main/teamComposer.ts');
-  assert.deepEqual(C, { existingAgents: 50, answers: 3, answerChars: 2000, analysisChars: 6000, manifests: 12 });
+  assert.deepEqual(C, { existingAgents: 50, answers: 3, answerChars: 2000, analysisChars: 6000, manifests: 12, scope: 40 });
   const raw = {
     repoRoot: '/evil',
     round: 2,
@@ -150,4 +150,17 @@ test('runAgentDraft keeps the first agent and rejects an empty or questions answ
   assert.equal(s.request.length, 2000);
   assert.equal(s.repoRoot, null);
   assert.deepEqual(s.existingAgents.map((a) => a.name), ['Jim']);
+});
+
+test('sanitizeTeamInput filters scope', () => {
+  const { sanitizeTeamInput, TEAM_INPUT_CAPS: C } = loadTs('src/main/teamComposer.ts');
+  const raw = { round: 1, scope: ['packages/b', '../x', 'packages/a', 'packages/a', 'zzz'] };
+  const allowed = new Set(['packages/a', 'packages/b']);
+  assert.deepEqual(sanitizeTeamInput(raw, '/r', undefined, allowed).scope, ['packages/a', 'packages/b']);
+  // without an allow-list only the path-safety filter applies
+  assert.deepEqual(sanitizeTeamInput(raw, '/r').scope, ['packages/a', 'packages/b', 'zzz']);
+  assert.equal(sanitizeTeamInput({ round: 1 }, '/r').scope, undefined);
+  assert.equal(C.scope, 40);
+  const many = Array.from({ length: 60 }, (_, i) => `p/${String(i).padStart(2, '0')}`);
+  assert.equal(sanitizeTeamInput({ scope: many }, '/r', undefined, new Set(many)).scope.length, 40);
 });

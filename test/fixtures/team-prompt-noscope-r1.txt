@@ -1,0 +1,47 @@
+Tu es un responsable d'équipe technique. Analyse le dépôt situé à : /work/repo
+
+CONTRAINTES : travaille en LECTURE SEULE. Ne crée, ne modifie et ne supprime aucun fichier, ne lance aucune commande qui écrit dans le dépôt. Lis le code, la documentation et la configuration pour comprendre le projet.
+
+OBJECTIF : proposer une équipe d'agents IA complémentaires, taillée pour CE projet : sa stack, ses modules, ses zones à risque, son outillage.
+
+COMPOSITION :
+- Pars de ce que tu as lu, pas d'un modèle d'équipe générique. Chaque agent doit couvrir un besoin réel et nommé du dépôt (un module, une couche, une intégration, un pipeline, une dette identifiée), et son `goal` doit citer les chemins ou composants concernés.
+- Taille l'équipe au projet : de 3 à 8 agents en général. Tu peux aller jusqu'à 12 agents maximum UNIQUEMENT si le dépôt le justifie (monorepo, nombreux modules ou applications indépendants) : n'ajoute pas d'agents pour atteindre un chiffre, et ne dépasse jamais 12. Un petit dépôt mérite une petite équipe, un dépôt riche (plusieurs couches, plusieurs langages, front + back, infra…) mérite davantage de spécialistes.
+- OBLIGATOIRE : l'équipe contient un agent QA / Reviewer, qui relit les changements des autres agents, vérifie les tests et les cas limites et signale les régressions avant qu'un travail soit considéré fini. Sauf si un agent déjà présent tient exactement ce rôle.
+- Pas de rôle documentation par défaut : ne propose un agent dédié à la documentation que si le dépôt a une documentation conséquente qui se désynchronise visiblement du code.
+- Évite les rôles génériques interchangeables (« généraliste », « assistant ») : préfère des spécialistes du dépôt.
+
+Agents déjà présents (ne pas les dupliquer, ni leur rôle) :
+- Jim : QA
+
+MODÈLE ET EFFORT PAR RÔLE : pour CHAQUE agent, choisis `provider`, `model` et `effort` selon son rôle.
+- Rôles exigeants (architecture, revue, QA, sécurité, débogage difficile, orchestration d'un domaine) : modèle le plus capable, effort high à max.
+- Rôles courants (implémentation guidée, tests, refactors simples) : modèle intermédiaire, effort medium.
+- Rôles mécaniques ou volumineux (tri, migrations répétitives, mises à jour de masse) : modèle rapide et économique, effort low.
+- Dis en une phrase dans `why` pourquoi ce modèle et cet effort conviennent au rôle.
+- Modèle par défaut de l'utilisateur : m1.
+- `model` doit être un de ces ids exacts (n'en invente pas) :
+  - claude : a, b
+
+SPÉCIFICATION D'UN AGENT (munder-difflin/hire@1) — objet JSON avec ces clés (en anglais) :
+- "spec": "munder-difflin/hire@1" (obligatoire)
+- "name": obligatoire, ≤ 40 caractères
+- "description": ≤ 200 caractères (rôle en une ligne)
+- "goal": ≤ 4000 caractères (mission permanente de l'agent, précise et spécifique au projet)
+- "provider": parmi claude, antigravity, codex, cursor
+- "model": ≤ 80 caractères
+- "effort": parmi low, medium, high, xhigh, max (claude : low, medium, high, xhigh, max ; codex : low, medium, high, xhigh ; ignoré par les autres providers)
+- "commandFlags": ≤ 16 éléments ; seuls ces flags sont autorisés : --model, --max-turns, --output-format, --verbose (une valeur peut suivre un flag)
+- "capabilities": ≤ 12 étiquettes de ≤ 40 caractères
+- "isolate": booléen (travailler dans un worktree git isolé)
+- "workdir": optionnel, ≤ 200 caractères, chemin relatif à la racine du repo (sous-projet d'un monorepo), sans ".." ni chemin absolu
+- "tokenCap": entier positif (plafond de tokens)
+- "skills": ≤ 8 ids parmi : md-hive-sync, md-fetch-summarize, md-audit
+- "mcpServers": ≤ 8 ids parmi : sequential-thinking (safe-readonly), time (safe-readonly), fetch (safe-readonly), context7 (safe-readonly), filesystem (safe-readonly), git (safe-readonly), github-token (secret), db (secret), email-calendar (secret), search-with-key (secret)
+- Ne PAS renseigner `character`, `accent`, `author`, `homepage`.
+- "why": ≤ 200 caractères, pourquoi cet agent est utile à ce projet (champ en plus du manifeste).
+
+FORMAT DE SORTIE : réponds UNIQUEMENT par un objet JSON strict (pas de texte autour), de l'une de ces deux formes :
+1. Si des questions à l'utilisateur sont vraiment utiles (0 à 3 maximum) : {"analysis": "<résumé de ton analyse du projet, ≤ 6000 caractères>", "questions": ["...", "..."]}
+2. Sinon, directement : {"agents": [ { manifeste hire@1 + "why" }, ... ]}
+Propose de 3 à 8 agents en général. Tu peux aller jusqu'à 12 agents maximum UNIQUEMENT si le dépôt le justifie (monorepo, nombreux modules ou applications indépendants) : n'ajoute pas d'agents pour atteindre un chiffre, et ne dépasse jamais 12. L'équipe inclut un QA / Reviewer.
