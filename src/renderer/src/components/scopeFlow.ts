@@ -252,3 +252,84 @@ export async function switchScope<A extends FloorAgent>(
   const known = await deps.teamsList([...to.scope].sort()).catch(() => [] as SavedTeam[]);
   return { ok: true, known, notParked };
 }
+
+export interface ResumeDeps<E extends { id: string; name: string }, A extends { id: string }> {
+  /** Respawn one saved entry; `error` holds « already exists » when its PTY runs. */
+  respawn(entry: E): Promise<{ agent: A | null; error?: string; fresh?: boolean; note?: string }>;
+  isOnFloor(id: string): boolean;
+  addAgent(agent: A): void;
+  restoreQueues(queues: Record<string, unknown[]>): void;
+  setCurrentTeam(id: string): void;
+  teamsTouch(scope: string[], id: string): Promise<unknown>;
+  teamsSave(t: { id: string; scope: string[]; summary: string; agents: unknown[]; queues: Record<string, unknown[]> }): Promise<unknown>;
+  teamsList(scope: string[]): Promise<SavedTeam[]>;
+  setKnownTeams(list: SavedTeam[]): void;
+  warn?(msg: string, e: unknown): void;
+}
+
+/**
+ * Respawn a remembered team: concurrent spawns, agents added in team order,
+ * queues given back then cleared from the saved team (never replayed twice),
+ * team touched and remembered as current. Returns the French notes to show
+ * (history lost, sub-project gone, failures). Agents that fail keep their
+ * entry and their queue in the saved team.
+ */
+export async function resumeSavedTeam<E extends { id: string; name: string }, A extends { id: string }>(
+  deps: ResumeDeps<E, A>,
+  team: Pick<SavedTeam, 'id' | 'scope' | 'summary' | 'agents' | 'queues'>
+): Promise<string[]> {
+  const entries = team.agents as E[];
+  let fresh = 0;
+  let workdirGone = 0;
+  let worktreeGone = 0;
+  let alreadyHere = 0;
+  const failures: string[] = [];
+  const results = await Promise.all(entries.map(async (a) => {
+    const r = await deps.respawn(a);
+    if (!r.agent) {
+      // « already exists » is fine only when that agent is on the floor already;
+      // otherwise its PTY runs with no card — a failure to report.
+      if ((r.error ?? '').includes('already exists') && deps.isOnFloor(a.id)) {
+        alreadyHere++;
+      } else {
+        failures.push(`${a.name} : ${r.error ?? 'échec du lancement'}`);
+      }
+      return null;
+    }
+    if (r.fresh) fresh++;
+    if (r.note === 'workdir-gone') workdirGone++;
+    if (r.note === 'worktree-gone') worktreeGone++;
+    return r.agent;
+  }));
+  const back = new Set<string>();
+  for (const agent of results) {
+    if (!agent) continue;
+    deps.addAgent(agent);
+    back.add(agent.id);
+  }
+  const queues = team.queues ?? {};
+  deps.restoreQueues(Object.fromEntries(Object.entries(queues).filter(([id]) => back.has(id))));
+  if (back.size + alreadyHere > 0) {
+    deps.setCurrentTeam(team.id);
+    try {
+      await deps.teamsTouch(team.scope, team.id);
+      // Queues given back to the store leave the file so a later resume can
+      // never deliver them twice; agents that failed to respawn keep theirs.
+      const kept = Object.fromEntries(Object.entries(queues).filter(([id]) => !back.has(id) && !deps.isOnFloor(id)));
+      if (Object.keys(kept).length !== Object.keys(queues).length) {
+        await deps.teamsSave({ id: team.id, scope: team.scope, summary: team.summary, agents: team.agents, queues: kept });
+      }
+    } catch (e) {
+      deps.warn?.('[scope] could not update the resumed team', e);
+    }
+    const list = await deps.teamsList(team.scope).catch(() => null);
+    if (list) deps.setKnownTeams(list);
+  }
+
+  const notes: string[] = [];
+  if (fresh) notes.push(fresh > 1 ? `${fresh} agents repartent sans historique` : '1 agent repart sans historique');
+  if (workdirGone) notes.push(`sous-projet introuvable : démarré à la racine${workdirGone > 1 ? ` (${workdirGone} agents)` : ''}`);
+  if (worktreeGone) notes.push(`worktree introuvable : démarré dans le repo${worktreeGone > 1 ? ` (${worktreeGone} agents)` : ''}`);
+  if (failures.length) notes.push(`non relancé${failures.length > 1 ? 's' : ''} — ${failures.join(' ; ')}`);
+  return notes;
+}

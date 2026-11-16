@@ -8,7 +8,7 @@ import type { HarnessConfig } from './config';
 import { respawnAgent } from './respawn';
 import { parkEntries } from './parking';
 import {
-  sameScope, shouldPreEnable, switchScope, type FloorScope, type SavedTeam
+  resumeSavedTeam, sameScope, shouldPreEnable, switchScope, type FloorScope, type SavedTeam
 } from '@/components/scopeFlow';
 
 /** First load: read the floor scope (and its current team); a never-seen
@@ -115,61 +115,20 @@ export async function resumeTeam(team: SavedTeam, config: HarnessConfig | null):
 
 async function resumeTeamNow(team: SavedTeam, config: HarnessConfig | null): Promise<string[]> {
   const prevSel = useStore.getState().selectedId;
-  const entries = team.agents as PersistedAgent[];
-  let fresh = 0;
-  let workdirGone = 0;
-  let worktreeGone = 0;
-  let alreadyHere = 0;
-  const failures: string[] = [];
-  const results = await Promise.all(entries.map(async (a) => {
-    const r = await respawnAgent(a, config);
-    if (!r.agent) {
-      // « already exists » is fine only when that agent is on the floor already;
-      // otherwise its PTY runs with no card — a failure to report.
-      if ((r.error ?? '').includes('already exists') && useStore.getState().agents.some((x) => x.id === a.id)) {
-        alreadyHere++;
-      } else {
-        failures.push(`${a.name} : ${r.error ?? 'échec du lancement'}`);
-      }
-      return null;
-    }
-    if (r.fresh) fresh++;
-    if (r.note === 'workdir-gone') workdirGone++;
-    if (r.note === 'worktree-gone') worktreeGone++;
-    return r.agent;
-  }));
-  const st = useStore.getState();
-  const back = new Set<string>();
-  for (const agent of results) {
-    if (!agent) continue;
-    st.addAgent(agent);
-    back.add(agent.id);
-  }
-  st.restoreQueues(Object.fromEntries(Object.entries(team.queues ?? {}).filter(([id]) => back.has(id))));
-  if (back.size + alreadyHere > 0) {
-    void st.setCurrentTeam(team.id);
-    try {
-      await window.cth.teamsTouch(team.scope, team.id);
-      // Queues given back to the store leave the file so a later resume can
-      // never deliver them twice; agents that failed to respawn keep theirs.
-      const onFloor = new Set(useStore.getState().agents.map((x) => x.id));
-      const kept = Object.fromEntries(Object.entries(team.queues ?? {}).filter(([id]) => !back.has(id) && !onFloor.has(id)));
-      if (Object.keys(kept).length !== Object.keys(team.queues ?? {}).length) {
-        await window.cth.teamsSave({ id: team.id, scope: team.scope, summary: team.summary, agents: team.agents, queues: kept });
-      }
-    } catch (e) {
-      console.warn('[scope] could not update the resumed team', e);
-    }
-    st.setKnownTeams(await window.cth.teamsList(team.scope).catch(() => st.knownTeams));
-  }
+  const notes = await resumeSavedTeam<PersistedAgent, Agent>({
+    respawn: (a) => respawnAgent(a, config),
+    isOnFloor: (id) => useStore.getState().agents.some((x) => x.id === id),
+    addAgent: (a) => useStore.getState().addAgent(a),
+    restoreQueues: (q) => useStore.getState().restoreQueues(q),
+    setCurrentTeam: (id) => { void useStore.getState().setCurrentTeam(id); },
+    teamsTouch: (scope, id) => window.cth.teamsTouch(scope, id),
+    teamsSave: (t) => window.cth.teamsSave(t),
+    teamsList: (scope) => window.cth.teamsList(scope),
+    setKnownTeams: (list) => useStore.getState().setKnownTeams(list),
+    warn: (msg, e) => console.warn(msg, e)
+  }, team);
   // addAgent selects each spawn; put the user back where they were.
   const after = useStore.getState();
   if (prevSel && after.agents.some((x) => x.id === prevSel)) after.select(prevSel);
-
-  const notes: string[] = [];
-  if (fresh) notes.push(fresh > 1 ? `${fresh} agents repartent sans historique` : '1 agent repart sans historique');
-  if (workdirGone) notes.push(`sous-projet introuvable : démarré à la racine${workdirGone > 1 ? ` (${workdirGone} agents)` : ''}`);
-  if (worktreeGone) notes.push(`worktree introuvable : démarré dans le repo${worktreeGone > 1 ? ` (${worktreeGone} agents)` : ''}`);
-  if (failures.length) notes.push(`non relancé${failures.length > 1 ? 's' : ''} — ${failures.join(' ; ')}`);
   return notes;
 }

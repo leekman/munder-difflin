@@ -6,7 +6,7 @@ const test = require('node:test');
 const loadTs = require('./load-ts.cjs');
 const {
   sameScope, scopeLabel, shouldPreEnable, splitMissing, planScopeSwitch, switchScope, localSummary,
-  countOpenTasks
+  countOpenTasks, resumeSavedTeam
 } = loadTs('src/renderer/src/components/scopeFlow.ts');
 
 const ITEMS = [
@@ -325,4 +325,78 @@ test('switchScope: nobody parked leaves a pre-existing current team untouched', 
   assert.deepEqual(r.notParked, ['jim']);
   assert.deepEqual(calls, ['teamsSave', 'parkPty:pty-jim', 'parkAgents:', 'scopeSet', 'teamsList']);
   assert.equal(saves.length, 1);
+});
+
+function resumeDeps({ floor = [], respawn, ...over } = {}) {
+  const calls = [];
+  const onFloor = new Set(floor);
+  const deps = {
+    respawn: respawn ?? (async (e) => ({ agent: { id: e.id } })),
+    isOnFloor: (id) => onFloor.has(id),
+    addAgent: (a) => { calls.push(`add:${a.id}`); onFloor.add(a.id); },
+    restoreQueues: (q) => { calls.push('restoreQueues'); deps.restored = q; },
+    setCurrentTeam: (id) => calls.push(`current:${id}`),
+    teamsTouch: async (scope, id) => { calls.push(`touch:${id}`); },
+    teamsSave: async (t) => { calls.push('teamsSave'); deps.saved = t; return { ok: true, team: t }; },
+    teamsList: async () => { calls.push('teamsList'); return [{ id: 'T0' }]; },
+    setKnownTeams: (l) => { calls.push('known'); deps.known = l; },
+    ...over
+  };
+  return { deps, calls };
+}
+
+const TEAM = {
+  id: 'T0', scope: ['packages/services/live'], summary: 'S',
+  agents: [{ id: 'jim', name: 'Jim' }, { id: 'pam', name: 'Pam' }, { id: 'kevin', name: 'Kevin' }],
+  queues: { jim: [{ id: 'qj' }], pam: [{ id: 'qp' }], kevin: [{ id: 'qk' }] }
+};
+
+test('resumeSavedTeam gives back the queues of respawned agents and re-saves the team without them', async () => {
+  const { deps, calls } = resumeDeps({
+    respawn: async (e) => (e.id === 'kevin' ? { agent: null, error: 'spawn failed' } : { agent: { id: e.id } })
+  });
+  const notes = await resumeSavedTeam(deps, TEAM);
+  assert.deepEqual(calls, ['add:jim', 'add:pam', 'restoreQueues', 'current:T0', 'touch:T0', 'teamsSave', 'teamsList', 'known']);
+  assert.deepEqual(deps.restored, { jim: [{ id: 'qj' }], pam: [{ id: 'qp' }] });
+  // Kevin failed: his entry and his queue stay in the file.
+  assert.deepEqual(deps.saved.agents, TEAM.agents);
+  assert.deepEqual(deps.saved.queues, { kevin: [{ id: 'qk' }] });
+  assert.deepEqual(notes, ['non relancé — Kevin : spawn failed']);
+});
+
+test('resumeSavedTeam: « already exists » with the agent on the floor counts as present', async () => {
+  const { deps, calls } = resumeDeps({
+    floor: ['jim'],
+    respawn: async (e) => (e.id === 'jim' ? { agent: null, error: 'pty pty-jim already exists' } : { agent: { id: e.id } })
+  });
+  const notes = await resumeSavedTeam(deps, { ...TEAM, agents: [TEAM.agents[0]], queues: { jim: [{ id: 'qj' }] } });
+  assert.deepEqual(notes, []);
+  assert.deepEqual(deps.restored, {});
+  // Jim is on the floor: his queue leaves the file (his live queue is the store's).
+  assert.deepEqual(calls, ['restoreQueues', 'current:T0', 'touch:T0', 'teamsSave', 'teamsList', 'known']);
+  assert.deepEqual(deps.saved.queues, {});
+});
+
+test('resumeSavedTeam: « already exists » without the agent on the floor is a failure', async () => {
+  const { deps, calls } = resumeDeps({
+    respawn: async () => ({ agent: null, error: 'pty pty-jim already exists' })
+  });
+  const notes = await resumeSavedTeam(deps, { ...TEAM, agents: [TEAM.agents[0]], queues: { jim: [{ id: 'qj' }] } });
+  assert.deepEqual(notes, ['non relancé — Jim : pty pty-jim already exists']);
+  // Nobody back: the team is neither made current nor rewritten.
+  assert.deepEqual(calls, ['restoreQueues']);
+  assert.deepEqual(deps.restored, {});
+});
+
+test('resumeSavedTeam: no queue to clear -> no re-save; notes for fresh and gone folders', async () => {
+  const { deps, calls } = resumeDeps({
+    respawn: async (e) => ({ agent: { id: e.id }, fresh: true, note: e.id === 'jim' ? 'workdir-gone' : 'worktree-gone' })
+  });
+  const notes = await resumeSavedTeam(deps, { ...TEAM, agents: TEAM.agents.slice(0, 2), queues: {} });
+  assert.ok(!calls.includes('teamsSave'));
+  assert.deepEqual(notes, [
+    '2 agents repartent sans historique',
+    'sous-projet introuvable : démarré à la racine',
+    'worktree introuvable : démarré dans le repo'
+  ]);
 });
