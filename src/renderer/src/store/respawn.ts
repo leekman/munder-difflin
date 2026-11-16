@@ -29,10 +29,44 @@ export function restoreCwd(
 async function dirExists(path: string): Promise<boolean> {
   try {
     const st = await window.cth.statAbs(path);
-    return !!st?.exists;
+    return !!st?.exists && !st.isFile;
   } catch {
     return false;
   }
+}
+
+export interface RestoreProbes {
+  isRepo: (path: string) => Promise<boolean>;
+  isDir: (path: string) => Promise<boolean>;
+}
+
+const defaultProbes: RestoreProbes = {
+  isRepo: (p) => window.cth.gitIsRepo(p),
+  isDir: dirExists
+};
+
+/** `restoreCwd` + sondes : choisit le cwd de reprise puis, si le sous-dossier a
+ *  disparu, retombe sur la racine (worktree vivant, sinon dépôt de l'étage).
+ *  Partagé par la reprise d'équipe et la relance d'un PTY mort. `note` garde la
+ *  première cause (`worktree-gone` n'est pas écrasé par `workdir-gone`) ;
+ *  `subGone` dit que le sous-dossier est introuvable. */
+export async function resolveRestoreCwd(
+  a: { cwd: string; worktreePath?: string; workdir?: string },
+  floorRepo: string | null,
+  probes: RestoreProbes = defaultProbes
+): Promise<{ cwd: string; note?: RestoreNote; worktreeAlive: boolean; subGone: boolean }> {
+  const worktreeAlive = a.worktreePath ? await probes.isRepo(a.worktreePath) : false;
+  const picked = restoreCwd(a, worktreeAlive, floorRepo);
+  let cwd = picked.cwd;
+  let note: RestoreNote | undefined = picked.note;
+  let subGone = false;
+  const checkSub = worktreeAlive ? cwd !== a.worktreePath : !!a.workdir;
+  if (checkSub && !(await probes.isDir(cwd))) {
+    cwd = (worktreeAlive ? a.worktreePath : floorRepo) ?? a.cwd;
+    note = note ?? 'workdir-gone';
+    subGone = true;
+  }
+  return { cwd, note, worktreeAlive, subGone };
 }
 
 /** Relance un agent avec son id d'origine (reprise de session). Le corps par agent
@@ -55,21 +89,12 @@ export async function respawnAgent(
     // Le worktree d'un agent isolé survit au redémarrage : on y rentre (au bon
     // sous-dossier) au lieu de le ré-isoler. S'il a été supprimé, gitIsRepo est faux
     // et on retombe sur le cwd d'origine.
-    const worktreeAlive = a.worktreePath ? await window.cth.gitIsRepo(a.worktreePath) : false;
-    const picked = restoreCwd(a, worktreeAlive, storeFloorRepo);
-    let cwd = picked.cwd;
-    let note: string | undefined = picked.note;
-    const worktreeGone = picked.note === 'worktree-gone';
+    const { cwd, note, subGone } = await resolveRestoreCwd(a, storeFloorRepo);
+    const worktreeGone = note === 'worktree-gone';
     if (worktreeGone) {
       console.warn(`[restore] worktree gone for ${a.id} (${a.worktreePath}); falling back to base repo ${a.cwd}`);
     }
-    // Le sous-projet a pu disparaître : retour à la racine (worktree ou dépôt de l'étage).
-    const checkSub = worktreeAlive ? cwd !== a.worktreePath : a.workdir !== undefined && !!a.workdir;
-    if (checkSub && !(await dirExists(cwd))) {
-      cwd = (worktreeAlive ? a.worktreePath : storeFloorRepo) ?? a.cwd;
-      note = 'workdir-gone';
-      console.warn(`[restore] workdir gone for ${a.id}; falling back to ${cwd}`);
-    }
+    if (subGone) console.warn(`[restore] workdir gone for ${a.id}; falling back to ${cwd}`);
     const res = await window.cth.spawnPty({
       id: ptyId,
       cwd,
@@ -97,11 +122,11 @@ export async function respawnAgent(
         status: 'idle',
         action: worktreeGone
           ? 'worktree gone — using base repo'
-          : note === 'workdir-gone' ? 'subfolder gone — using repo root' : 'starting up',
+          : subGone ? 'subfolder gone — using repo root' : 'starting up',
         // Worktree disparu : on l'oublie pour ne plus sonder un chemin mort.
         worktreePath: worktreeGone ? undefined : a.worktreePath,
         // Sous-projet disparu : on repart de la racine.
-        workdir: note === 'workdir-gone' ? undefined : a.workdir,
+        workdir: subGone ? undefined : a.workdir,
         // Crush démarre nu et rend le seed ici ; useHive le tape après le boot.
         seedPrompt: res.seedPrompt,
         carrying: undefined,

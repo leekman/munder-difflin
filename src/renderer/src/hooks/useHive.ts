@@ -20,7 +20,7 @@ import { bridgeOf, providerPreset } from '../../../shared/agentProvider';
 import { isDurableRole, preferredAgentRole, roleForHiveSpawn } from '../../../shared/agentRole';
 import { inboxNudgeText } from '../../../shared/hiveNudge';
 import { resolveGodName } from '../../../shared/godIdentity';
-import { restoreCwd } from '@/store/respawn';
+import { resolveRestoreCwd } from '@/store/respawn';
 import { acquireTerminal, resetTerminal, isTerminalAutomationSafe } from '@/components/terminalPool';
 import { canDeliverToAgent, deliverWithAcknowledgement, checkPrecondition } from './queueDelivery';
 import { OFFICE_CAST, DEFAULT_CHARACTER } from '@/agents/cast';
@@ -1208,8 +1208,7 @@ export function useHive(config: HarnessConfig | null): void {
         const cfg = await window.cth.getConfig();
         // Isolated agents run inside their worktree (a.cwd is the base repo); re-enter
         // it if it still exists, else fall back to the base cwd — same as restoreTeam.
-        const worktreeAlive = a.worktreePath ? await window.cth.gitIsRepo(a.worktreePath) : false;
-        const { cwd } = restoreCwd(a, worktreeAlive, floorRepo);
+        const { cwd } = await resolveRestoreCwd(a, floorRepo);
         await window.cth.killPty(deadId);
         // Soft-reset the pooled xterm in place (no-op if none): re-arm input and
         // clear the stale frame so the revived TUI paints clean — like the button.
