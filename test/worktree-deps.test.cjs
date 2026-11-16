@@ -179,7 +179,7 @@ test('wires dependency linking into successful isolated worktree creation', () =
     activeSource.indexOf('if (wt.ok)'),
     activeSource.indexOf('} else {', activeSource.indexOf('if (wt.ok)'))
   );
-  assert.match(successBranch, /await linkWorktreeDeps\(origCwd, wtPath\)/);
+  assert.match(successBranch, /await linkWorktreeDeps\(repoRoot, wtPath\)/);
 });
 
 test('removes linked dependencies before worker retention checks', () => {

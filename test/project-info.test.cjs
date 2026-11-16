@@ -95,3 +95,15 @@ test('identity.md carries the project block', async () => {
   assert.match(read('a1'), /Projet :/);
   assert.doesNotMatch(read('a2'), /Projet :/);
 });
+
+test('a sub-folder of a checkout reports its subdir and the block names it', async () => {
+  const repo = makeRepo();
+  fs.mkdirSync(path.join(repo, 'packages', 'x'), { recursive: true });
+  const info = await resolveProjectInfo(path.join(repo, 'packages', 'x'));
+  assert.equal(info.subdir, 'packages/x');
+  assert.equal(info.isolated, false);
+  assert.ok(projectBlock(info).includes('Sous-projet : `packages/x`'));
+  const root = await resolveProjectInfo(repo);
+  assert.equal(root.subdir, undefined);
+  assert.ok(!projectBlock(root).includes('Sous-projet'));
+});

@@ -3,7 +3,7 @@ import { spawn } from 'node:child_process';
 import {
   rmSync, existsSync, readFileSync, readdirSync, statSync, cpSync, writeFileSync,
   unlinkSync, mkdirSync, renameSync, createWriteStream, copyFileSync, lstatSync,
-  readlinkSync, symlinkSync
+  readlinkSync, symlinkSync, realpathSync
 } from 'node:fs';
 import { randomBytes, randomUUID, createHash, timingSafeEqual } from 'node:crypto';
 import { join, resolve, sep, basename, dirname, isAbsolute } from 'node:path';
@@ -26,7 +26,7 @@ import {
 } from './git';
 import { readFloorScope, writeFloorScope, listTeams, saveTeam, touchTeam, forgetTeam } from './teamStore';
 import { detectSubprojects, rootHasManifest, type Subproject } from './subprojects';
-import { resolveProjectInfo, type ProjectInfo } from './projectInfo';
+import { resolveProjectInfo, worktreeCwd, type ProjectInfo } from './projectInfo';
 import { linkWorktreeDeps, unlinkWorktreeDeps } from './worktreeDeps';
 import { HiveManager, type AgentMeta, type HiveMessage, type HiveTask } from './hive';
 import { HookServer } from './hooks';
@@ -2784,12 +2784,20 @@ async function spawnAgentCore(opts: AgentSpawnOptions, owner: Electron.WebConten
         const br = await getBranch(origCwd);
         const baseBranch = 'current' in br && br.current ? br.current : 'main';
         baseBranchHint = baseBranch;
-        const wt = await addWorktree(origCwd, wtPath, baseBranch);
+        // Worktrees are created from the repo root; the agent then starts in the
+        // same sub-folder it was asked to work in. null → today's behaviour.
+        const repoRoot = (await mainRepoRoot(origCwd)) ?? origCwd;
+        const wt = await addWorktree(repoRoot, wtPath, baseBranch);
         if (wt.ok) {
-          opts.cwd = wtPath;
+          // Canonicalise (symlinked tmp/home dirs) so the relative path is right, and fall
+          // back to the worktree root if the sub-folder isn't tracked (absent from the checkout).
+          let realOrig = origCwd;
+          try { realOrig = realpathSync(origCwd); } catch { /* keep as is */ }
+          const startCwd = worktreeCwd(wtPath, repoRoot, realOrig);
+          opts.cwd = existsSync(startCwd) ? startCwd : wtPath;
           worktreePaths.set(opts.id, wtPath);
-          worktreeOrigins.set(opts.id, origCwd);
-          const deps = await linkWorktreeDeps(origCwd, wtPath);
+          worktreeOrigins.set(opts.id, repoRoot);
+          const deps = await linkWorktreeDeps(repoRoot, wtPath);
           if (!deps.ok) console.error('[worktree] dependency link failed:', deps.error);
         } else {
           console.error('[worktree] addWorktree failed:', wt.error);
