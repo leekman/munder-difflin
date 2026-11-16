@@ -18,6 +18,7 @@ import { isInboxNudge } from '@shared/hiveNudge';
 import { parkEntries } from './parking';
 import { refocusAfterRemoval, focusOnLoad, restoreFocus } from './focusMode';
 import { chooseRosterSource } from './rosterSource';
+import type { FloorScope, SavedTeam } from '@/components/scopeFlow';
 
 export type ToolKind =
   | 'Read' | 'Edit' | 'Write' | 'Bash' | 'WebFetch' | 'WebSearch'
@@ -186,6 +187,23 @@ interface State {
   addAgentOpen: boolean;
   /** "Compose the team" modal (analysis → proposal → hire files). */
   composeTeamOpen: boolean;
+  /** 'scratch' = « Repartir de zéro » : composer sans les agents existants. */
+  composeTeamMode: 'normal' | 'scratch';
+  /** Périmètre monorepo de l'étage (main le stocke) ; null tant qu'il n'est pas lu. */
+  floorScope: FloorScope | null;
+  setFloorScope: (s: FloorScope | null) => void;
+  /** Équipe enregistrée d'où vient l'équipe courante (reprise ou composée), sinon null. */
+  currentTeamId: string | null;
+  setCurrentTeamId: (id: string | null) => void;
+  /** Équipes mémorisées du périmètre courant (plus récemment utilisée d'abord). */
+  knownTeams: SavedTeam[];
+  setKnownTeams: (teams: SavedTeam[]) => void;
+  /** Bilan de la dernière reprise d'équipe (« 1 agent repart sans historique »…), ou null. */
+  scopeNotice: string | null;
+  setScopeNotice: (notice: string | null) => void;
+  /** Panneau « Périmètre » ouvert. */
+  scopePanelOpen: boolean;
+  setScopePanelOpen: (open: boolean) => void;
   fullscreenAgentId: string | null;
   /** Does the user work in focus mode by default? Persisted as a boolean, and
    *  written ONLY by an explicit toggle. Kept in the store rather than read once
@@ -298,7 +316,10 @@ interface State {
   /** Clear an agent's entire pending queue. */
   clearQueue: (agentId: string) => void;
   setAddAgentOpen: (open: boolean) => void;
-  setComposeTeamOpen: (open: boolean) => void;
+  setComposeTeamOpen: (open: boolean, mode?: 'normal' | 'scratch') => void;
+  /** Rend leurs files de messages à des agents repris (équipe mémorisée).
+   *  Les messages s'ajoutent après ceux déjà en file. */
+  restoreQueues: (queues: Record<string, unknown[]>) => void;
   /** Validated manifests waiting for one-at-a-time human review. */
   hireQueue: HireReviewQueue;
   enqueuePendingHires: (manifests: readonly HireManifest[]) => void;
@@ -681,6 +702,17 @@ export const useStore = create<State>((set, get) => ({
   feeds: {},
   addAgentOpen: false,
   composeTeamOpen: false,
+  composeTeamMode: 'normal',
+  floorScope: null,
+  setFloorScope: (floorScope) => set({ floorScope }),
+  currentTeamId: null,
+  setCurrentTeamId: (currentTeamId) => set({ currentTeamId }),
+  knownTeams: [],
+  setKnownTeams: (knownTeams) => set({ knownTeams }),
+  scopeNotice: null,
+  setScopeNotice: (scopeNotice) => set({ scopeNotice }),
+  scopePanelOpen: false,
+  setScopePanelOpen: (scopePanelOpen) => set({ scopePanelOpen }),
   ccTabRequest: null,
   requestCommandCenterTab: (tab) =>
     set((s) => ({ ccTabRequest: { tab, seq: (s.ccTabRequest?.seq ?? 0) + 1 } })),
@@ -998,7 +1030,19 @@ export const useStore = create<State>((set, get) => ({
       return { agents, feeds, selectedId, restorableAgents, fullscreenAgentId };
     }),
   setAddAgentOpen: (open) => set({ addAgentOpen: open }),
-  setComposeTeamOpen: (open) => set({ composeTeamOpen: open }),
+  setComposeTeamOpen: (open, mode = 'normal') =>
+    set({ composeTeamOpen: open, composeTeamMode: open ? mode : 'normal' }),
+  restoreQueues: (queues) =>
+    set((s) => {
+      const entries = Object.entries(queues).filter(([, q]) => Array.isArray(q) && q.length > 0);
+      if (!entries.length) return s;
+      const messageQueues = { ...s.messageQueues };
+      for (const [id, q] of entries) {
+        messageQueues[id] = [...(messageQueues[id] ?? []), ...(q as QueuedMessage[])];
+      }
+      persistQueues(messageQueues);
+      return { messageQueues };
+    }),
   hireQueue: EMPTY_HIRE_QUEUE,
   enqueuePendingHires: (manifests) => set((s) => ({
     hireQueue: enqueueHires(s.hireQueue, manifests)

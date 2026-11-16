@@ -14,6 +14,10 @@ import { AgentStrip } from '@/components/AgentStrip';
 import { AddAgentModal } from '@/components/AddAgentModal';
 import { ComposeTeamModal } from '@/components/ComposeTeamModal';
 import { shouldHighlightCompose } from '@/components/composeTeamFlow';
+import { ScopePanel } from '@/components/ScopePanel';
+import { KnownTeamCard } from '@/components/KnownTeamCard';
+import { scopeLabel, type Subproject } from '@/components/scopeFlow';
+import { loadFloorScope } from '@/store/scopeActions';
 import { MichaelBooting } from '@/components/MichaelBooting';
 import { OnboardingWizard } from '@/components/OnboardingWizard';
 import { HivePicker } from '@/components/HivePicker';
@@ -84,6 +88,13 @@ export function App() {
   const highlightCompose = shouldHighlightCompose(agents);
   const clearPendingHires = useStore(s => s.clearPendingHires);
   const godStatus = useStore(s => s.godStatus);
+  const floorScope = useStore(s => s.floorScope);
+  const knownTeams = useStore(s => s.knownTeams);
+  const scopePanelOpen = useStore(s => s.scopePanelOpen);
+  const setScopePanelOpen = useStore(s => s.setScopePanelOpen);
+  const scopeNotice = useStore(s => s.scopeNotice);
+  // Sub-project labels for the header chip (main caches the scan).
+  const [subItems, setSubItems] = useState<Subproject[]>([]);
   const fullscreenAgentId = useStore(s => s.fullscreenAgentId);
   const appThemeNow = useAppTheme();
   // Agent column width (left). New key on purpose: the old `cth.sidebarWidth`
@@ -268,6 +279,22 @@ export function App() {
     useStore.getState().restoreFocusMode();
   }, [config?.onboardingComplete, agents]);
 
+  // Monorepo scope of this floor (first opening applies the pre-enable rule).
+  useEffect(() => {
+    if (!config?.onboardingComplete || floorRepo === null) return;
+    void loadFloorScope();
+  }, [config?.onboardingComplete]);
+  useEffect(() => {
+    if (!floorScope?.enabled) return;
+    let cancelled = false;
+    window.cth.floorSubprojects().then((r) => { if (!cancelled) setSubItems(r.items); }).catch(() => {});
+    return () => { cancelled = true; };
+  }, [floorScope?.enabled, scopePanelOpen]);
+  const scopeName = scopeLabel(floorScope?.scope ?? [], subItems);
+  const knownTeamCard = knownTeams.length > 0 && highlightCompose
+    ? <KnownTeamCard scopeName={scopeName} config={config} />
+    : null;
+
   // Track viewport width for splitter clamping
   useEffect(() => {
     const onResize = () => setVpWidth(window.innerWidth);
@@ -322,20 +349,43 @@ export function App() {
         {/* v0.3.7: the version is no longer inert text — it doubles as the
             update control (check / download / restart to update). */}
         <UpdateBadge />
-        <span
-          className="cth-titlebar-nodrag"
-          title={floorRepo}
-          style={{
-            fontFamily: 'var(--cth-font-ui)',
-            fontSize: 13,
-            fontWeight: 600,
-            color: 'var(--cth-ink-900)',
-            maxWidth: 240,
-            overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap'
-          }}
-        >
-          {repoName(floorRepo)}
-        </span>
+        {floorScope ? (
+          // Scope chip: opens the « Périmètre » panel (also how monorepo mode is turned on).
+          <button
+            className="cth-titlebar-nodrag cth-settings-btn"
+            onClick={() => setScopePanelOpen(true)}
+            title={floorScope.enabled ? `${floorRepo} — périmètre` : `${floorRepo} — mode monorepo désactivé`}
+            style={{
+              display: 'inline-flex', alignItems: 'center', gap: 4,
+              height: 24, padding: '0 8px', maxWidth: 360,
+              background: floorScope.enabled ? 'var(--cth-paper-100)' : 'transparent',
+              boxShadow: floorScope.enabled ? 'inset 0 0 0 1px var(--cth-ink-300)' : 'none',
+              border: 'none', borderRadius: 2, cursor: 'pointer',
+              fontFamily: 'var(--cth-font-ui)', fontSize: 13, color: 'var(--cth-ink-900)'
+            }}
+          >
+            <span style={{ fontWeight: 600, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>
+              {repoName(floorRepo)}
+              {floorScope.enabled && <span style={{ fontWeight: 400, color: 'var(--cth-ink-700)' }}> · {scopeName}</span>}
+            </span>
+            <span style={{ color: 'var(--cth-ink-500)', fontSize: 11 }}>▾</span>
+          </button>
+        ) : (
+          <span
+            className="cth-titlebar-nodrag"
+            title={floorRepo}
+            style={{
+              fontFamily: 'var(--cth-font-ui)',
+              fontSize: 13,
+              fontWeight: 600,
+              color: 'var(--cth-ink-900)',
+              maxWidth: 240,
+              overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap'
+            }}
+          >
+            {repoName(floorRepo)}
+          </span>
+        )}
         <button
           className="cth-titlebar-nodrag cth-settings-btn"
           onClick={() => setHarnessPickerOpen(true)}
@@ -492,10 +542,28 @@ export function App() {
           position: 'relative',
           display: 'flex', flexDirection: 'column'
         }}>
+          {scopeNotice && (
+            <PixelPanel variant="inset" style={{
+              marginBottom: 12, flexShrink: 0,
+              display: 'flex', alignItems: 'center', justifyContent: 'space-between', gap: 12
+            }}>
+              <span style={{ fontSize: 13, color: 'var(--cth-ink-700)' }}>{scopeNotice}</span>
+              <button
+                type="button"
+                aria-label="Fermer"
+                onClick={() => useStore.getState().setScopeNotice(null)}
+                style={{ background: 'transparent', border: 'none', cursor: 'pointer', color: 'var(--cth-ink-500)', padding: 4, display: 'inline-flex' }}
+              >
+                <Icon name="x" />
+              </button>
+            </PixelPanel>
+          )}
           {agent ? (
             <>
+              {/* Scope with a remembered team: offer it instead of composing. */}
+              {knownTeamCard && <div style={{ marginBottom: 12, flexShrink: 0 }}>{knownTeamCard}</div>}
               {/* God-only floor: the team is still to be composed. */}
-              {highlightCompose && (
+              {highlightCompose && !knownTeamCard && (
                 <PixelPanel variant="active" style={{
                   marginBottom: 12, flexShrink: 0,
                   display: 'flex', alignItems: 'center', justifyContent: 'space-between', gap: 12
@@ -527,7 +595,8 @@ export function App() {
               display: 'flex', alignItems: 'center', justifyContent: 'center',
               pointerEvents: 'none'
             }}>
-              <div style={{ pointerEvents: 'auto', width: 360 }}>
+              <div style={{ pointerEvents: 'auto', width: 360, display: 'flex', flexDirection: 'column', gap: 12 }}>
+                {knownTeamCard}
                 <PixelPanel variant="dialog" title="Empty floor" noPadding>
                   <div style={{ padding: 16, display: 'flex', flexDirection: 'column', gap: 10 }}>
                     <p style={{ margin: 0, fontSize: 13, lineHeight: '20px' }}>
@@ -582,6 +651,8 @@ export function App() {
       {composeTeamOpen && (
         <ComposeTeamModal onClose={() => setComposeTeamOpen(false)} />
       )}
+
+      {scopePanelOpen && <ScopePanel onClose={() => setScopePanelOpen(false)} />}
 
       {harnessPickerOpen && (
         <HivePicker config={config} onOpenCurrent={() => setHarnessPickerOpen(false)} onClose={() => setHarnessPickerOpen(false)} />
