@@ -45,7 +45,8 @@ const defaultProbes: RestoreProbes = {
   isDir: dirExists
 };
 
-/** `restoreCwd` + sondes : choisit le cwd de reprise puis, si le sous-dossier a
+/** `restoreCwd` + sondes : choisit le cwd de reprise (worktree vivant : `a.cwd`
+ *  d'abord s'il y est et existe, sinon `workdir`) puis, si le sous-dossier a
  *  disparu, retombe sur la racine (worktree vivant, sinon dépôt de l'étage).
  *  Partagé par la reprise d'équipe et la relance d'un PTY mort. `note` garde la
  *  première cause (`worktree-gone` n'est pas écrasé par `workdir-gone`) ;
@@ -56,6 +57,15 @@ export async function resolveRestoreCwd(
   probes: RestoreProbes = defaultProbes
 ): Promise<{ cwd: string; note?: RestoreNote; worktreeAlive: boolean; subGone: boolean }> {
   const worktreeAlive = a.worktreePath ? await probes.isRepo(a.worktreePath) : false;
+  // Worktree vivant : le cwd du premier lancement, s'il est dans le worktree et
+  // existe encore, est celui que `--resume` attend ; `workdir` n'est qu'un repli.
+  if (worktreeAlive && a.worktreePath && a.workdir !== undefined) {
+    const root = a.worktreePath.replace(/\/+$/, '');
+    const cwd = a.cwd.replace(/\/+$/, '');
+    if ((cwd === root || cwd.startsWith(`${root}/`)) && await probes.isDir(a.cwd)) {
+      return { cwd: a.cwd, note: undefined, worktreeAlive, subGone: false };
+    }
+  }
   const picked = restoreCwd(a, worktreeAlive, floorRepo);
   let cwd = picked.cwd;
   let note: RestoreNote | undefined = picked.note;

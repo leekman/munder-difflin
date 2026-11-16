@@ -61,3 +61,17 @@ test('resolveRestoreCwd: sans worktree, workdir disparu -> floorRepo', async () 
   const r = await resolveRestoreCwd({ cwd: '/repo/p/x', workdir: 'p/x' }, '/repo', probes(false, []));
   assert.deepEqual([r.cwd, r.note], ['/repo', 'workdir-gone']);
 });
+
+test('resolveRestoreCwd: cwd du premier lancement dans le worktree et present -> prefere a workdir', async () => {
+  const r = await resolveRestoreCwd(
+    { cwd: '/wt/apps/web', worktreePath: '/wt', workdir: 'p/x' }, '/repo', probes(true, ['/wt/apps/web', '/wt/p/x'])
+  );
+  assert.deepEqual(r, { cwd: '/wt/apps/web', note: undefined, worktreeAlive: true, subGone: false });
+});
+
+test('resolveRestoreCwd: cwd dans le worktree mais disparu -> repli sur workdir', async () => {
+  const r = await resolveRestoreCwd(
+    { cwd: '/wt/apps/web', worktreePath: '/wt', workdir: 'p/x' }, '/repo', probes(true, ['/wt/p/x'])
+  );
+  assert.deepEqual(r, { cwd: '/wt/p/x', note: undefined, worktreeAlive: true, subGone: false });
+});
