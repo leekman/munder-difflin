@@ -44,15 +44,38 @@ export function splitMissing(scope: readonly string[], items: readonly Subprojec
 /** Statuses meaning a turn is in progress (the agent would be cut mid-work). */
 const BUSY = new Set<string>(['working', 'thinking', 'compacting', 'blocked']);
 
-type FloorAgent = Pick<Agent, 'id' | 'name' | 'status'> & { ptyId?: string; description?: string; isGod?: boolean; isAssistant?: boolean };
+type FloorAgent = Pick<Agent, 'id' | 'name' | 'status'> & {
+  ptyId?: string; description?: string; isGod?: boolean; isAssistant?: boolean; ephemeral?: boolean;
+};
 
-export interface SwitchPlan<A extends FloorAgent = Agent> { toPark: A[]; busy: A[]; needsConfirm: boolean }
+/** `staying`: the god's ephemeral workers, which keep running on the floor. */
+export interface SwitchPlan<A extends FloorAgent = Agent> { toPark: A[]; busy: A[]; staying: A[]; needsConfirm: boolean }
 
-/** Who leaves the floor on a scope switch: every worker (never god nor assistants). */
+/** Who leaves the floor on a scope switch: every worker, never god, assistants
+ *  nor the god's ephemeral workers (main reaps those on its own). */
 export function planScopeSwitch<A extends FloorAgent>(agents: readonly A[]): SwitchPlan<A> {
-  const toPark = agents.filter((a) => !a.isGod && !a.isAssistant);
+  const workers = agents.filter((a) => !a.isGod && !a.isAssistant);
+  const toPark = workers.filter((a) => !a.ephemeral);
+  const staying = workers.filter((a) => a.ephemeral);
   const busy = toPark.filter((a) => BUSY.has(a.status));
-  return { toPark, busy, needsConfirm: toPark.length > 0 };
+  return { toPark, busy, staying, needsConfirm: toPark.length > 0 };
+}
+
+/** Teams are remembered (Composer l'équipe, scope switch) only in monorepo mode. */
+export function remembersTeams(fs: Pick<FloorScope, 'enabled'> | null | undefined): boolean {
+  return !!fs?.enabled;
+}
+
+/** Scope whose remembered teams the floor offers: its own in monorepo mode,
+ *  else the whole repo (only teams saved while the mode was on can be there). */
+export function knownTeamsScope(fs: Pick<FloorScope, 'enabled' | 'scope'> | null | undefined): string[] {
+  return fs?.enabled ? [...fs.scope].sort() : [];
+}
+
+/** Whether the « équipe connue » card may show: monorepo mode, or mode turned
+ *  off after use (whole-repo teams that already exist). */
+export function showsKnownTeams(fs: Pick<FloorScope, 'enabled' | 'scope'> | null | undefined): boolean {
+  return !!fs && (fs.enabled || fs.scope.length === 0);
 }
 
 /** Fallback team summary: `N agents : <nom> — <description> ; …`, ≤ 300 chars. */

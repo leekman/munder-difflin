@@ -8,7 +8,7 @@ import {
   countOpenTasks, planScopeSwitch, sameScope, splitMissing, type Subproject
 } from '@/components/scopeFlow';
 
-type Confirm = { ids: string[]; names: { name: string; busy: boolean }[]; openTasks: number | null };
+type Confirm = { ids: string[]; names: { name: string; busy: boolean }[]; openTasks: number | null; staying: number };
 
 /** « Périmètre » panel: monorepo toggle + sub-project selection of the floor. */
 export function ScopePanel({ onClose }: { onClose: () => void }) {
@@ -84,7 +84,7 @@ export function ScopePanel({ onClose }: { onClose: () => void }) {
     const busyIds = new Set(plan.busy.map((a) => a.id));
     const names = [...plan.busy, ...plan.toPark.filter((a) => !busyIds.has(a.id))]
       .map((a) => ({ name: a.name, busy: busyIds.has(a.id) }));
-    setConfirm({ ids, names, openTasks: null });
+    setConfirm({ ids, names, openTasks: null, staying: plan.staying.length });
     try {
       const n = countOpenTasks(await window.cth.hiveTasks(), plan.toPark.map((a) => a.id));
       setConfirm((c) => (c ? { ...c, openTasks: n } : c));
@@ -210,6 +210,11 @@ function ConfirmPark({ confirm }: { confirm: Confirm }) {
       <p style={{ margin: 0, ...textStyle }}>
         Ces agents sont mis de côté avec leur conversation et leur worktree. Tu pourras reprendre cette équipe.
       </p>
+      {confirm.staying > 0 && (
+        <p style={{ margin: 0, ...mutedStyle }}>
+          Les workers du god restent à l'étage.
+        </p>
+      )}
     </div>
   );
 }

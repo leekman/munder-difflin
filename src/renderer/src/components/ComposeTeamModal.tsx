@@ -20,7 +20,7 @@ import {
   type ComposeCard,
   type ComposeStep
 } from '@/components/composeTeamFlow';
-import { localSummary, type Subproject } from '@/components/scopeFlow';
+import { localSummary, remembersTeams, type Subproject } from '@/components/scopeFlow';
 
 type Tab = 'auto' | 'manual';
 type WriteResult = { written: string[]; errors: string[]; manifests: HireManifest[] };
@@ -239,7 +239,8 @@ export function ComposeTeamModal({ onClose }: { onClose: () => void }) {
     }
     setResult(res);
     setStep('written');
-    if (res.manifests.length > 0) void rememberTeam(res.manifests);
+    // Monorepo mode off: as before the scope feature, no team is remembered.
+    if (res.manifests.length > 0 && remembersTeams(useStore.getState().floorScope)) void rememberTeam(res.manifests);
   };
 
   const importNow = () => {

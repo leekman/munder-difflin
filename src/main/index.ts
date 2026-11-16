@@ -5115,7 +5115,9 @@ async function processSpawnRequest(filePath: string): Promise<void> {
       role: meta.role,
       worktreePath: res.worktreePath,
       character: typeof raw.character === 'string' ? raw.character : undefined,
-      accent: typeof raw.accent === 'string' ? raw.accent : undefined
+      accent: typeof raw.accent === 'string' ? raw.accent : undefined,
+      // A god-hired worker: a scope switch leaves it on the floor.
+      ephemeral: true
     });
   } catch { /* window torn down */ }
 

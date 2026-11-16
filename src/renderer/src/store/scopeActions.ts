@@ -8,7 +8,7 @@ import type { HarnessConfig } from './config';
 import { respawnAgent } from './respawn';
 import { parkEntries } from './parking';
 import {
-  resumeSavedTeam, sameScope, shouldPreEnable, switchScope, type FloorScope, type SavedTeam
+  knownTeamsScope, resumeSavedTeam, sameScope, shouldPreEnable, switchScope, type FloorScope, type SavedTeam
 } from '@/components/scopeFlow';
 
 /** First load: read the floor scope (and its current team); a never-seen
@@ -24,7 +24,8 @@ export async function loadFloorScope(): Promise<void> {
     }
     st.setFloorScope({ enabled: scope.enabled, scope: scope.scope });
     st.setCurrentTeamId(scope.teamId ?? null);
-    st.setKnownTeams(await window.cth.teamsList(scope.scope));
+    // Mode off: only whole-repo teams saved while it was on (none otherwise).
+    st.setKnownTeams(await window.cth.teamsList(knownTeamsScope(scope)));
   } catch (e) {
     console.warn('[scope] load failed', e);
     st.setFloorScope({ enabled: false, scope: [] });

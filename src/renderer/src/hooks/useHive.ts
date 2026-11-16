@@ -1078,6 +1078,7 @@ export function useHive(config: HarnessConfig | null): void {
         command: rec.command,
         provider: rec.provider as Agent['provider'],
         isGod: false,
+        ...(rec.ephemeral === true ? { ephemeral: true } : {}),
         recentTextTs: Date.now()
       };
       useStore.getState().addAgent(agent);

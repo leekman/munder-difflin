@@ -90,6 +90,10 @@ export interface Agent {
   /** Michael's prep assistant — send-only; enriches prompts and forwards them to
    *  the god. Excluded from broadcast fan-out and from the restorable-dead sweep. */
   isAssistant?: boolean;
+  /** A worker the god hired for one job (main's `liveWorkers`): it stays on the
+   *  floor across a scope switch. In memory only — `slimAgents` drops it, so a
+   *  worker restored after a restart is a regular agent (as main sees it). */
+  ephemeral?: boolean;
   /** The human has this agent 1:1 and Michael has been told to leave it alone.
    *  Mirrors `RegistryAgent.onHold`; main owns the record, this is the copy the
    *  title bar renders from. */
@@ -371,7 +375,7 @@ const LS_FOCUS_MODE = 'cth.prefersFocusMode';
 // Fields that are large or transient — not worth persisting across reloads.
 // contextTokens/contextLimit describe a LIVE session; persisting them showed a
 // dead session's context gauge after a restart until the poll caught up.
-export type PersistedAgent = Omit<Agent, 'recentAssistantText' | 'recentTextTs' | 'blockReason' | 'contextTokens' | 'contextLimit' | 'seedPrompt'>;
+export type PersistedAgent = Omit<Agent, 'recentAssistantText' | 'recentTextTs' | 'blockReason' | 'contextTokens' | 'contextLimit' | 'seedPrompt' | 'ephemeral'>;
 
 // ─── The roster mirror ──────────────────────────────────────────────────────
 //
@@ -469,8 +473,8 @@ try {
 } catch { /* not a browser context (unit tests) */ }
 
 export function slimAgents(agents: Agent[]): PersistedAgent[] {
-  return agents.map(({ recentAssistantText, recentTextTs, blockReason, contextTokens, contextLimit, seedPrompt, ...rest }) => {
-    void recentAssistantText; void recentTextTs; void blockReason; void contextTokens; void contextLimit; void seedPrompt;
+  return agents.map(({ recentAssistantText, recentTextTs, blockReason, contextTokens, contextLimit, seedPrompt, ephemeral, ...rest }) => {
+    void recentAssistantText; void recentTextTs; void blockReason; void contextTokens; void contextLimit; void seedPrompt; void ephemeral;
     return rest;
   });
 }

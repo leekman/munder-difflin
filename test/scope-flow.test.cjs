@@ -6,7 +6,7 @@ const test = require('node:test');
 const loadTs = require('./load-ts.cjs');
 const {
   sameScope, scopeLabel, shouldPreEnable, splitMissing, planScopeSwitch, switchScope, localSummary,
-  countOpenTasks, resumeSavedTeam
+  countOpenTasks, resumeSavedTeam, remembersTeams, knownTeamsScope, showsKnownTeams
 } = loadTs('src/renderer/src/components/scopeFlow.ts');
 
 const ITEMS = [
@@ -59,6 +59,37 @@ test('planScopeSwitch excludes god and assistants, lists busy agents', () => {
   assert.deepEqual(plan.toPark.map((a) => a.id), ['jim', 'pam', 'dwight']);
   assert.deepEqual(plan.busy.map((a) => a.id), ['pam', 'dwight']);
   assert.equal(plan.needsConfirm, true);
+});
+
+test('planScopeSwitch leaves the god\'s ephemeral workers on the floor', () => {
+  const plan = planScopeSwitch([agent('jim'), agent('w-1', { ephemeral: true, status: 'working' })]);
+  assert.deepEqual(plan.toPark.map((a) => a.id), ['jim']);
+  assert.deepEqual(plan.busy, []);
+  assert.deepEqual(plan.staying.map((a) => a.id), ['w-1']);
+});
+
+test('switchScope does not park nor save an ephemeral worker', async () => {
+  const { deps, calls } = fakeDeps({
+    agents: [agent('jim', { ptyId: 'pty-jim' }), agent('w-1', { ptyId: 'w-1', ephemeral: true })]
+  });
+  const r = await switchScope(deps, FROM, TO, '', ['jim']);
+  assert.equal(r.ok, true);
+  assert.deepEqual(deps.saved.agents.map((a) => a.id), ['jim']);
+  assert.ok(!calls.includes('parkPty:w-1'));
+  assert.ok(calls.includes('parkAgents:jim'));
+});
+
+test('monorepo off: no team is remembered; the card only offers whole-repo teams', () => {
+  assert.equal(remembersTeams(null), false);
+  assert.equal(remembersTeams({ enabled: false, scope: [] }), false);
+  assert.equal(remembersTeams({ enabled: true, scope: [] }), true);
+  assert.deepEqual(knownTeamsScope({ enabled: true, scope: ['b', 'a'] }), ['a', 'b']);
+  assert.deepEqual(knownTeamsScope({ enabled: false, scope: ['a'] }), []);
+  assert.equal(showsKnownTeams(null), false);
+  assert.equal(showsKnownTeams({ enabled: true, scope: ['a'] }), true);
+  // Turned off after use: the whole-repo teams saved while it was on are offered.
+  assert.equal(showsKnownTeams({ enabled: false, scope: [] }), true);
+  assert.equal(showsKnownTeams({ enabled: false, scope: ['a'] }), false);
 });
 
 test('planScopeSwitch: no confirmation without workers', () => {

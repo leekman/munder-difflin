@@ -16,7 +16,7 @@ import { ComposeTeamModal } from '@/components/ComposeTeamModal';
 import { shouldHighlightCompose } from '@/components/composeTeamFlow';
 import { ScopePanel } from '@/components/ScopePanel';
 import { KnownTeamCard } from '@/components/KnownTeamCard';
-import { scopeLabel, type Subproject } from '@/components/scopeFlow';
+import { scopeLabel, showsKnownTeams, type Subproject } from '@/components/scopeFlow';
 import { loadFloorScope } from '@/store/scopeActions';
 import { MichaelBooting } from '@/components/MichaelBooting';
 import { OnboardingWizard } from '@/components/OnboardingWizard';
@@ -291,7 +291,7 @@ export function App() {
     return () => { cancelled = true; };
   }, [floorScope?.enabled, scopePanelOpen]);
   const scopeName = scopeLabel(floorScope?.scope ?? [], subItems);
-  const knownTeamCard = knownTeams.length > 0 && highlightCompose
+  const knownTeamCard = knownTeams.length > 0 && highlightCompose && showsKnownTeams(floorScope)
     ? <KnownTeamCard scopeName={scopeName} config={config} />
     : null;
 
