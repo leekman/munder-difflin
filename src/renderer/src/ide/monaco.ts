@@ -178,6 +178,10 @@ export function languageForPath(path: string): string {
     case 'toml': return 'ini';
     case 'xml': return 'xml';
     case 'sql': return 'sql';
+    case 'lua': return 'lua';
+    case 'ps1': return 'powershell';
+    case 'bat':
+    case 'cmd': return 'bat';
     case 'dockerfile': return 'dockerfile';
     default:
       if (name.toLowerCase() === 'dockerfile') return 'dockerfile';

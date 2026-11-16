@@ -136,7 +136,9 @@
     "editNote": "编辑私人笔记",
     "addNote": "添加私人笔记",
     "editNoteAria": "编辑 {{name}} 的笔记",
-    "noteAria": "{{name}} 的笔记"
+    "noteAria": "{{name}} 的笔记",
+    "sendingTo": "已向 {{to}} 发送消息",
+    "toHuman": "你"
   },
   "askMe": {
     "emptyTitle": "现在没有需要你的事。🌿",
@@ -170,7 +172,9 @@
     "restorable": "{{name}}——可从上次会话恢复",
     "dismiss": "忽略 {{name}}——从恢复列表中永久移除",
     "dismissAria": "忽略 {{name}}",
-    "restoreAll": "全部恢复（{{count}}）"
+    "restoreAll": "全部恢复（{{count}}）",
+    "collapse": "收起智能体侧栏",
+    "expand": "展开智能体侧栏"
   },
   "sidebar": {
     "terminal": "终端",
@@ -206,7 +210,51 @@
     "plusMention": "提及代理",
     "plusSearch": "搜索…",
     "plusBack": "返回",
-    "plusNothing": "没有匹配项。"
+    "plusNothing": "没有匹配项。",
+    "inboxNew": "新的蜂巢邮件：代理正在读取收件箱。",
+    "inboxFrom": "消息来自",
+    "inboxFromUnknown": "消息",
+    "inboxFromHuman": "你",
+    "inboxFromSystem": "系统",
+    "plan": "计划",
+    "showAll": "显示全部",
+    "showLess": "收起",
+    "step": {
+      "pending": "待办",
+      "in_progress": "进行中",
+      "completed": "已完成"
+    },
+    "group": {
+      "commandsOne": "运行了 1 条命令",
+      "commandsMany": "运行了 {{count}} 条命令",
+      "readsOne": "读取了 1 个文件",
+      "readsMany": "读取了 {{count}} 个文件",
+      "editsOne": "编辑了 1 个文件",
+      "editsMany": "编辑了 {{count}} 个文件",
+      "searchesOne": "搜索了 1 次",
+      "searchesMany": "搜索了 {{count}} 次",
+      "webOne": "打开了 1 个网页",
+      "webMany": "打开了 {{count}} 个网页",
+      "agentsOne": "运行了 1 个子代理",
+      "agentsMany": "运行了 {{count}} 个子代理",
+      "messagesOne": "发送了 1 条消息",
+      "messagesMany": "发送了 {{count}} 条消息",
+      "planOne": "更新了计划",
+      "planMany": "更新了计划",
+      "toolsOne": "使用了 1 个工具",
+      "toolsMany": "使用了 {{count}} 个工具",
+      "errors": "{{count}} 个失败"
+    },
+    "compacted": "上下文已压缩",
+    "sending": "发送中…",
+    "queued": "排队中，代理空闲时发送",
+    "sendNow": "立即发送",
+    "removeQueued": "移除",
+    "ackSeen": "代理已收到",
+    "ackDone": "代理已处理",
+    "addReaction": "添加表情回应",
+    "removeReaction": "移除此回应",
+    "jumpToLatest": "跳到最新消息"
   },
   "toolWaterfall": {
     "fresh": "新计 {{tokens}}t",

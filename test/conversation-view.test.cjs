@@ -193,3 +193,29 @@ test('internal markup is removed from user bubbles, pasted text is kept', () => 
     'Explique ça',
   ]);
 });
+
+test('plan: TodoWrite replaces the list, TaskCreate/TaskUpdate edit it', () => {
+  const rec = (id, name, input) => ({ type: 'assistant', uuid: id, message: { content: [{ type: 'tool_use', id, name, input }] } });
+  const res = (id, text) => ({ type: 'user', uuid: `r${id}`, message: { content: [{ type: 'tool_result', tool_use_id: id, content: text }] } });
+  const lines = [
+    rec('t1', 'TodoWrite', { todos: [
+      { content: 'Lire le code', status: 'completed', activeForm: 'Lecture du code' },
+      { content: 'Corriger', status: 'in_progress', activeForm: 'Correction' },
+      { content: 'Tester', status: 'pending' },
+    ] }),
+  ].map((r) => JSON.stringify(r)).join('\n') + '\n';
+  let entries = conv.foldConversation([], conv.parseTranscriptChunk(lines));
+  assert.deepEqual(conv.derivePlan(entries).map((s) => [s.title, s.status]), [
+    ['Lire le code', 'completed'], ['Corriger', 'in_progress'], ['Tester', 'pending']
+  ]);
+  const tasks = [
+    rec('c1', 'TaskCreate', { subject: 'Étape A', activeForm: 'Faisant A' }), res('c1', 'Task #7 created successfully'),
+    rec('c2', 'TaskCreate', { subject: 'Étape B' }), res('c2', 'Task #8 created successfully'),
+    rec('u1', 'TaskUpdate', { taskId: '7', status: 'completed' }), res('u1', 'ok'),
+    rec('u2', 'TaskUpdate', { taskId: '8', status: 'in_progress' }), res('u2', 'ok'),
+  ].map((r) => JSON.stringify(r)).join('\n') + '\n';
+  entries = conv.foldConversation([], conv.parseTranscriptChunk(tasks));
+  assert.deepEqual(conv.derivePlan(entries).map((s) => [s.id, s.title, s.status]), [
+    ['7', 'Étape A', 'completed'], ['8', 'Étape B', 'in_progress']
+  ]);
+});

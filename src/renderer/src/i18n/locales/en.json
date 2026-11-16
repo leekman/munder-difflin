@@ -136,7 +136,9 @@
     "editNote": "Edit private note",
     "addNote": "Add private note",
     "editNoteAria": "Edit note for {{name}}",
-    "noteAria": "Note for {{name}}"
+    "noteAria": "Note for {{name}}",
+    "sendingTo": "sent a message to {{to}}",
+    "toHuman": "you"
   },
   "askMe": {
     "emptyTitle": "Nothing needs you right now. 🌿",
@@ -170,7 +172,9 @@
     "restorable": "{{name}} — restorable from last session",
     "dismiss": "Dismiss {{name}} — remove permanently from the restore list",
     "dismissAria": "Dismiss {{name}}",
-    "restoreAll": "restore all ({{count}})"
+    "restoreAll": "restore all ({{count}})",
+    "collapse": "Collapse the agent sidebar",
+    "expand": "Expand the agent sidebar"
   },
   "sidebar": {
     "terminal": "terminal",
@@ -206,7 +210,51 @@
     "plusMention": "Mention an agent",
     "plusSearch": "Search…",
     "plusBack": "Back",
-    "plusNothing": "Nothing matches."
+    "plusNothing": "Nothing matches.",
+    "inboxNew": "New hive mail: the agent is reading its inbox.",
+    "inboxFrom": "Message from",
+    "inboxFromUnknown": "Message",
+    "inboxFromHuman": "you",
+    "inboxFromSystem": "harness",
+    "plan": "Plan",
+    "showAll": "Show all",
+    "showLess": "Show less",
+    "step": {
+      "pending": "To do",
+      "in_progress": "In progress",
+      "completed": "Done"
+    },
+    "group": {
+      "commandsOne": "Ran a command",
+      "commandsMany": "Ran {{count}} commands",
+      "readsOne": "read a file",
+      "readsMany": "read {{count}} files",
+      "editsOne": "edited a file",
+      "editsMany": "edited {{count}} files",
+      "searchesOne": "searched once",
+      "searchesMany": "searched {{count}} times",
+      "webOne": "opened a web page",
+      "webMany": "opened {{count}} web pages",
+      "agentsOne": "ran a subagent",
+      "agentsMany": "ran {{count}} subagents",
+      "messagesOne": "sent a message",
+      "messagesMany": "sent {{count}} messages",
+      "planOne": "updated the plan",
+      "planMany": "updated the plan",
+      "toolsOne": "used a tool",
+      "toolsMany": "used {{count}} tools",
+      "errors": "{{count}} failed"
+    },
+    "compacted": "Context compacted",
+    "sending": "Sending…",
+    "queued": "Queued, sent when the agent is free",
+    "sendNow": "Send now",
+    "removeQueued": "Remove",
+    "ackSeen": "Received by the agent",
+    "ackDone": "Handled by the agent",
+    "addReaction": "Add a reaction",
+    "removeReaction": "Remove this reaction",
+    "jumpToLatest": "Jump to the latest message"
   },
   "toolWaterfall": {
     "fresh": "fresh {{tokens}}t",

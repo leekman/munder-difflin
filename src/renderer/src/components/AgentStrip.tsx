@@ -8,18 +8,29 @@ import { useStore, type Agent } from '@/store/store';
 import { type HarnessConfig } from '@/store/config';
 import { useRestoreTeam } from '@/hooks/useRestoreTeam';
 import { useRtl } from '@/i18n/useDirection';
+import { useAgentSendPulses } from '@/hooks/useAgentSendPulses';
 
 export interface AgentStripProps {
   /** Needed to rebuild a spawn command when a restorable agent predates the
    *  persisted `command` field. Optional so the strip renders without config. */
   config?: HarnessConfig | null;
+  /** Collapsed: a narrow rail of avatars (status + activity cues only). */
+  collapsed?: boolean;
+  onToggleCollapsed?: () => void;
 }
+
+const headerButton = {
+  width: 22, height: 22, padding: 0, flexShrink: 0,
+  display: 'inline-flex', alignItems: 'center', justifyContent: 'center',
+  background: 'transparent', border: 'none', borderRadius: 4, cursor: 'pointer',
+  color: 'var(--cth-ink-700)'
+} as const;
 
 /** Estimated height of the note editor popover, used to keep it on screen. */
 const NOTE_POPOVER_H = 150;
 const RESTORE_MENU_MIN_W = 240;
 
-export function AgentStrip({ config }: AgentStripProps) {
+export function AgentStrip({ config, collapsed = false, onToggleCollapsed }: AgentStripProps) {
   const { t } = useTranslation();
   const rtl = useRtl();
   const agents = useStore(s => s.agents);
@@ -31,6 +42,11 @@ export function AgentStrip({ config }: AgentStripProps) {
   const reorderAgents = useStore(s => s.reorderAgents);
   const renameAgent = useStore(s => s.renameAgent);
   const setAgentNote = useStore(s => s.setAgentNote);
+  // Agents that just routed a hive message → a short "sent" pulse on their row.
+  const sendPulses = useAgentSendPulses();
+  const recipientLabel = (targets: string[]): string => targets
+    .map((id) => id === 'human' ? t('agentCard.toHuman') : (agents.find((x) => x.id === id)?.name ?? id))
+    .join(', ');
   // Shared with the fullscreen roster so both show one restore in progress.
   const { restoring, autoRestoring, restoreTeam } = useRestoreTeam(config);
   // ONE restore control (bottom of the column): a button whose dropdown OPENS
@@ -96,32 +112,47 @@ export function AgentStrip({ config }: AgentStripProps) {
       // row uses cream-200, which must stay visible against this.
       background: 'var(--cth-paper-100)'
     }}>
-      {/* Header: "Agents · N" + a quick add. */}
+      {/* Header: "Agents · N" + collapse toggle + a quick add. Collapsed, only
+          the toggle remains. */}
       <div style={{
-        display: 'flex', alignItems: 'center', justifyContent: 'space-between', gap: 8,
-        padding: '10px 12px 6px', flexShrink: 0
+        display: 'flex', alignItems: 'center',
+        justifyContent: collapsed ? 'center' : 'space-between', gap: 4,
+        padding: collapsed ? '10px 0 6px' : '10px 8px 6px 12px', flexShrink: 0
       }}>
-        <span style={{
-          fontFamily: 'var(--cth-font-ui)', fontSize: 12, fontWeight: 600,
-          color: 'var(--cth-ink-700)', whiteSpace: 'nowrap'
-        }}>
-          {t('agentStrip.header', { count: agents.length })}
-        </span>
-        <button
-          type="button"
-          onClick={() => setAddAgentOpen(true)}
-          title={t('agentStrip.addAgent')}
-          aria-label={t('agentStrip.addAgent')}
-          className="cth-titlebar-nodrag"
-          style={{
-            width: 22, height: 22, padding: 0, flexShrink: 0,
-            display: 'inline-flex', alignItems: 'center', justifyContent: 'center',
-            background: 'transparent', border: 'none', borderRadius: 4, cursor: 'pointer',
-            color: 'var(--cth-ink-700)'
-          }}
-        >
-          <Icon name="plus" />
-        </button>
+        {!collapsed && (
+          <span style={{
+            fontFamily: 'var(--cth-font-ui)', fontSize: 12, fontWeight: 600,
+            color: 'var(--cth-ink-700)', whiteSpace: 'nowrap', flex: 1, minWidth: 0,
+            overflow: 'hidden', textOverflow: 'ellipsis'
+          }}>
+            {t('agentStrip.header', { count: agents.length })}
+          </span>
+        )}
+        {onToggleCollapsed && (
+          <button
+            type="button"
+            onClick={onToggleCollapsed}
+            title={collapsed ? t('agentStrip.expand') : t('agentStrip.collapse')}
+            aria-label={collapsed ? t('agentStrip.expand') : t('agentStrip.collapse')}
+            aria-expanded={!collapsed}
+            className="cth-titlebar-nodrag"
+            style={headerButton}
+          >
+            <Icon name="sidebar" />
+          </button>
+        )}
+        {!collapsed && (
+          <button
+            type="button"
+            onClick={() => setAddAgentOpen(true)}
+            title={t('agentStrip.addAgent')}
+            aria-label={t('agentStrip.addAgent')}
+            className="cth-titlebar-nodrag"
+            style={headerButton}
+          >
+            <Icon name="plus" />
+          </button>
+        )}
       </div>
 
       {/* Scrollable card list — only this part scrolls; the bottom controls stay put. */}
@@ -129,7 +160,7 @@ export function AgentStrip({ config }: AgentStripProps) {
         flex: 1, minHeight: 0,
         overflowY: 'auto', overflowX: 'hidden',
         display: 'flex', flexDirection: 'column', gap: 2,
-        padding: '4px 8px 12px'
+        padding: collapsed ? '4px 6px 12px' : '4px 8px 12px'
       }}>
       {agents.map(a => (
         // Draggable wrapper: reorder the roster by dragging one card onto another.
@@ -189,12 +220,16 @@ export function AgentStrip({ config }: AgentStripProps) {
             }}
             note={a.note}
             onEditNote={() => setNoteEditId(a.id)}
+            compact={collapsed}
+            sending={sendPulses[a.id]
+              ? { key: sendPulses[a.id].key, toLabel: recipientLabel(sendPulses[a.id].targets), subject: sendPulses[a.id].subject }
+              : undefined}
           />
           {/* The note itself lives INSIDE the card (its own row above the gauge).
               This is the transient EDITOR: a fixed popover to the RIGHT of the
               card — the card has no room for an inline box, and the column
               clips overflow. ✎ opens it; Esc / ✕ / click-away closes. */}
-          {noteEditId === a.id && !dragId && (() => {
+          {noteEditId === a.id && !dragId && !collapsed && (() => {
             const rect = cardRefs.current[a.id]?.getBoundingClientRect();
             if (!rect) return null;
             const width = 280;
@@ -269,7 +304,50 @@ export function AgentStrip({ config }: AgentStripProps) {
       ))}
       </div>
 
+      {/* Collapsed: the bottom controls shrink to icon buttons. */}
+      {collapsed && (
+        <div style={{
+          marginTop: 'auto', flexShrink: 0,
+          display: 'flex', flexDirection: 'column', alignItems: 'center', gap: 6,
+          padding: '8px 0 12px',
+          borderTop: '1px solid var(--cth-ink-100)'
+        }}>
+          <button
+            type="button"
+            onClick={() => setAddAgentOpen(true)}
+            title={t('agentStrip.addAgent')}
+            aria-label={t('agentStrip.addAgent')}
+            className="cth-titlebar-nodrag"
+            style={{ ...headerButton, width: 30, height: 30, boxShadow: 'inset 0 0 0 1px var(--cth-ink-300)' }}
+          >
+            <Icon name="plus" />
+          </button>
+          {(restorableAgents.length > 0 || restoreBusy) && (
+            <span ref={restoreBtnRef} style={{ display: 'inline-flex' }}>
+              <button
+                type="button"
+                disabled={restoreBusy}
+                onClick={() => toggleRestoreMenu(restoreBtnRef.current)}
+                title={restoreBusy
+                  ? t('agentStrip.restoringTeam')
+                  : t('agentStrip.restoreTeam', { count: restorableAgents.length })}
+                aria-label={t('agentStrip.restoreTeam', { count: restorableAgents.length })}
+                className="cth-titlebar-nodrag"
+                style={{
+                  ...headerButton, width: 30, height: 30,
+                  background: 'var(--cth-ink-900)', color: 'var(--cth-paper-100)',
+                  opacity: restoreBusy ? 0.5 : 1, cursor: restoreBusy ? 'default' : 'pointer'
+                }}
+              >
+                <Icon name="play" />
+              </button>
+            </span>
+          )}
+        </div>
+      )}
+
       {/* Bottom controls, pinned below the scroll area: add agent + restore team + memory. */}
+      {!collapsed && (
       <div style={{
         marginTop: 'auto', flexShrink: 0,
         display: 'flex', flexDirection: 'column', gap: 8,
@@ -317,6 +395,7 @@ export function AgentStrip({ config }: AgentStripProps) {
           it never covers the terminal's composer when closed. */}
       <MemoryPanel />
       </div>
+      )}
       {restoreMenuOpen && restoreMenuPos && restorableAgents.length > 0 && (
         <>
           {/* click-away backdrop */}

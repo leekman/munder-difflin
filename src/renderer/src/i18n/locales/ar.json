@@ -136,7 +136,9 @@
     "editNote": "تحرير ملاحظة خاصة",
     "addNote": "إضافة ملاحظة خاصة",
     "editNoteAria": "تحرير ملاحظة {{name}}",
-    "noteAria": "ملاحظة {{name}}"
+    "noteAria": "ملاحظة {{name}}",
+    "sendingTo": "أرسل رسالة إلى {{to}}",
+    "toHuman": "أنت"
   },
   "askMe": {
     "emptyTitle": "لا شيء يحتاجك الآن. 🌿",
@@ -170,7 +172,9 @@
     "restorable": "{{name}} — قابل للاستعادة من الجلسة الماضية",
     "dismiss": "تجاهل {{name}} — أزِله نهائيًا من قائمة الاستعادة",
     "dismissAria": "تجاهل {{name}}",
-    "restoreAll": "استعادة الكل ({{count}})"
+    "restoreAll": "استعادة الكل ({{count}})",
+    "collapse": "طيّ الشريط الجانبي للوكلاء",
+    "expand": "توسيع الشريط الجانبي للوكلاء"
   },
   "sidebar": {
     "terminal": "الطرفية",
@@ -206,7 +210,51 @@
     "plusMention": "الإشارة إلى وكيل",
     "plusSearch": "بحث…",
     "plusBack": "رجوع",
-    "plusNothing": "لا توجد نتائج."
+    "plusNothing": "لا توجد نتائج.",
+    "inboxNew": "بريد جديد في الخلية: يقرأ الوكيل صندوق الوارد.",
+    "inboxFrom": "رسالة من",
+    "inboxFromUnknown": "رسالة",
+    "inboxFromHuman": "أنت",
+    "inboxFromSystem": "النظام",
+    "plan": "الخطة",
+    "showAll": "عرض الكل",
+    "showLess": "عرض أقل",
+    "step": {
+      "pending": "قادم",
+      "in_progress": "قيد التنفيذ",
+      "completed": "منجز"
+    },
+    "group": {
+      "commandsOne": "نفّذ أمرًا",
+      "commandsMany": "نفّذ {{count}} أوامر",
+      "readsOne": "قرأ ملفًا",
+      "readsMany": "قرأ {{count}} ملفات",
+      "editsOne": "عدّل ملفًا",
+      "editsMany": "عدّل {{count}} ملفات",
+      "searchesOne": "بحث مرة",
+      "searchesMany": "بحث {{count}} مرات",
+      "webOne": "فتح صفحة ويب",
+      "webMany": "فتح {{count}} صفحات ويب",
+      "agentsOne": "شغّل وكيلًا فرعيًا",
+      "agentsMany": "شغّل {{count}} وكلاء فرعيين",
+      "messagesOne": "أرسل رسالة",
+      "messagesMany": "أرسل {{count}} رسائل",
+      "planOne": "حدّث الخطة",
+      "planMany": "حدّث الخطة",
+      "toolsOne": "استخدم أداة",
+      "toolsMany": "استخدم {{count}} أدوات",
+      "errors": "فشل {{count}}"
+    },
+    "compacted": "تم ضغط السياق",
+    "sending": "جارٍ الإرسال…",
+    "queued": "في الانتظار، يُرسل عندما يتفرغ الوكيل",
+    "sendNow": "أرسل الآن",
+    "removeQueued": "إزالة",
+    "ackSeen": "استلمها الوكيل",
+    "ackDone": "عالجها الوكيل",
+    "addReaction": "أضف تفاعلًا",
+    "removeReaction": "أزل هذا التفاعل",
+    "jumpToLatest": "انتقل إلى أحدث رسالة"
   },
   "toolWaterfall": {
     "fresh": "جديد {{tokens}}ر",

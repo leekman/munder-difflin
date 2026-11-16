@@ -84,3 +84,15 @@ test('ancien nudge persisté toujours reconnu', () => {
 });
 
 test('texte utilisateur non reconnu', () => assert.equal(isInboxNudge('check my inbox please'), false));
+
+// — lecture du nudge pour l'affichage (titre + expéditeur) —
+
+test('parseInboxNudge relit les ids du nudge', () => {
+  const { parseInboxNudge } = loadTs('src/shared/hiveNudge.ts');
+  assert.deepEqual(parseInboxNudge(inboxNudgeText(['2026-11-10T15-00-00-000Z-a1b2c3', 'x'])), ['2026-11-10T15-00-00-000Z-a1b2c3', 'x']);
+  assert.deepEqual(parseInboxNudge('📬 inbox'), []);
+  assert.deepEqual(parseInboxNudge('  📬 inbox  '), []);
+  assert.deepEqual(parseInboxNudge('You have new hive inbox message(s) — at least: x.'), []);
+  assert.equal(parseInboxNudge('check my inbox please'), null);
+  assert.equal(parseInboxNudge('📬 inboxes are great'), null);
+});

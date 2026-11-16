@@ -6,7 +6,7 @@ import { PixelButton } from './PixelButton';
 import { AgentMonogram } from './AgentMonogram';
 import { PtyTerminalView } from './PtyTerminalView';
 import { MessageQueueComposer } from './MessageQueueComposer';
-import { TerminalWithConversation } from './ConversationView';
+import { TerminalWithConversation, useOpenQuestionCount } from './ConversationView';
 import { TasksKanban } from './TasksKanban';
 import { AskMeTab } from './AskMeTab';
 import { TriggersTab } from './triggers/TriggersTab';
@@ -127,6 +127,8 @@ export function CommandCenterPanel({ agent, fullscreen = false }: { agent: Agent
   const updateAgent = useStore((s) => s.updateAgent);
   const setFullscreen = useStore((s) => s.setFullscreen);
   const fullscreenAgentId = useStore((s) => s.fullscreenAgentId);
+  // Questions waiting on the human: badge + pulse on the "ask me" tab.
+  const askCount = useOpenQuestionCount(true);
   const onPtyStream = usePtyParser(agent.id);
   // True only for the DOCKED panel while the overlay holds this agent.
   const isFullscreenedHere = fullscreenAgentId === agent.id && !fullscreen;
@@ -280,6 +282,13 @@ export function CommandCenterPanel({ agent, fullscreen = false }: { agent: Agent
             }}
           >
             <Icon name={tabDef.icon} /> {t(tabDef.labelKey)}
+            {tabDef.key === 'human' && askCount > 0 && (
+              <span className="cth-attn-badge" style={{
+                minWidth: 16, height: 16, padding: '0 4px', borderRadius: 8, fontSize: 10, fontWeight: 700,
+                display: 'inline-flex', alignItems: 'center', justifyContent: 'center',
+                background: 'var(--cth-coral)', color: 'var(--cth-on-accent)'
+              }}>{askCount}</span>
+            )}
           </button>
         ))}
       </div>
