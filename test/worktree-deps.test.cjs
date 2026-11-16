@@ -179,7 +179,7 @@ test('wires dependency linking into successful isolated worktree creation', () =
     activeSource.indexOf('if (wt.ok)'),
     activeSource.indexOf('} else {', activeSource.indexOf('if (wt.ok)'))
   );
-  assert.match(successBranch, /await linkWorktreeDeps\(repoRoot, wtPath\)/);
+  assert.match(successBranch, /await linkWorktreeDeps\(repoRoot, wtPath, subdir/);
 });
 
 test('removes linked dependencies before worker retention checks', () => {
@@ -200,4 +200,37 @@ test('uses a Windows junction for the directory link', () => {
   const source = fs.readFileSync(path.join(__dirname, '..', 'src/main/worktreeDeps.ts'), 'utf8');
 
   assert.match(source, /process\.platform === ['"]win32['"] \? ['"]junction['"] :/);
+});
+
+test('links and unlinks a sub-project node_modules next to the root one', async () => {
+  const { repo, wtRoot } = makeHarness();
+  fs.mkdirSync(path.join(repo, 'packages', 'x', 'node_modules'), { recursive: true });
+  fs.writeFileSync(path.join(repo, 'packages', 'x', 'index.js'), 'x\n');
+  git(repo, 'add', '-A');
+  git(repo, 'commit', '-q', '-m', 'sub');
+  const wt = addWorktree(repo, wtRoot, 'agent-sub');
+  const subLink = path.join(wt, 'packages', 'x', 'node_modules');
+
+  assert.deepEqual(await linkWorktreeDeps(repo, wt, 'packages/x'), { ok: true, skipped: false });
+  assert.equal(fs.lstatSync(subLink).isSymbolicLink(), true);
+  assert.equal(fs.realpathSync(subLink), fs.realpathSync(path.join(repo, 'packages', 'x', 'node_modules')));
+  // idempotent: already present -> skipped
+  assert.deepEqual(await linkWorktreeDeps(repo, wt, 'packages/x'), { ok: true, skipped: true });
+
+  assert.deepEqual(await unlinkWorktreeDeps(repo, wt, 'packages/x'), { ok: true, removed: true });
+  assert.equal(fs.existsSync(subLink), false);
+  assert.ok(fs.existsSync(path.join(repo, 'packages', 'x', 'node_modules')));
+  assert.equal(git(wt, 'status', '--porcelain'), '');
+});
+
+test('unlink leaves a sub-project node_modules that is not our symlink', async () => {
+  const { repo, wtRoot } = makeHarness();
+  fs.mkdirSync(path.join(repo, 'packages', 'x', 'node_modules'), { recursive: true });
+  fs.writeFileSync(path.join(repo, 'packages', 'x', 'index.js'), 'x\n');
+  git(repo, 'add', '-A');
+  git(repo, 'commit', '-q', '-m', 'sub');
+  const wt = addWorktree(repo, wtRoot, 'agent-own');
+  fs.mkdirSync(path.join(wt, 'packages', 'x', 'node_modules'));
+  assert.deepEqual(await unlinkWorktreeDeps(repo, wt, 'packages/x'), { ok: true, removed: false });
+  assert.ok(fs.existsSync(path.join(wt, 'packages', 'x', 'node_modules')));
 });

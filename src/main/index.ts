@@ -6,7 +6,7 @@ import {
   readlinkSync, symlinkSync, realpathSync
 } from 'node:fs';
 import { randomBytes, randomUUID, createHash, timingSafeEqual } from 'node:crypto';
-import { join, resolve, sep, basename, dirname, isAbsolute } from 'node:path';
+import { join, resolve, sep, basename, dirname, isAbsolute, relative } from 'node:path';
 import { homedir } from 'node:os';
 import { request as httpsRequest } from 'node:https';
 import { PtyManager, type SpawnOptions } from './pty';
@@ -20,7 +20,7 @@ import {
 import { listDir, readFileText, readFileBinary, writeFileText, statAbs, expandTilde } from './fs';
 import { normalizeWeekly, weeklyDelayMs } from '../shared/weeklySchedule';
 import {
-  getBranch, getStatus, getLog, getBranches, getAheadBehind, isRepo, getDiff, mainRepoRoot,
+  getBranch, runGit, getStatus, getLog, getBranches, getAheadBehind, isRepo, getDiff, mainRepoRoot,
   addWorktree, removeWorktree, worktreeHasUnintegratedWork, worktreeIsGcSafe,
   getLogGraph, getCommitFiles, getFileAtRev, compareRefs, listWorktrees, checkoutRef
 } from './git';
@@ -384,6 +384,10 @@ const worktreePaths = new Map<string, string>();
 /** id → the original repo cwd the worktree was created from (needed to run
  *  `git worktree remove` from the parent tree, not the worktree itself). */
 const worktreeOrigins = new Map<string, string>();
+/** id → sub-project (relative POSIX to the checkout) the agent started in, when its
+ *  worktree carries a sub-project node_modules link that teardown must unlink before
+ *  dirty checks. Absent when the agent works at the checkout root. */
+const worktreeSubdirs = new Map<string, string>();
 
 /** A live god-triggered ephemeral worker, tracked from spawn to teardown. */
 interface WorkerRec {
@@ -432,6 +436,7 @@ interface PreservedWorktree {
   workerId: string;
   wtPath: string;
   origCwd: string;        // the parent repo to run `git worktree remove` from
+  subdir?: string;        // sub-project node_modules link to unlink before the gc check
   baseBranch: string;     // re-checked against this for "integrated yet?"
   scratchDir: string | null; // HIVE_ROOT/agents/<workerId> — removed alongside the worktree
   slack?: { channel: string; thread_ts: string };
@@ -496,6 +501,8 @@ function teardownPty(id: string): void {
     const origCwd = worktreeOrigins.get(id) ?? wtPath;
     worktreePaths.delete(id);
     worktreeOrigins.delete(id);
+    const subdir = worktreeSubdirs.get(id);
+    worktreeSubdirs.delete(id);
     // Ephemeral workers get a SAFETY-GATED teardown: never auto-remove a worktree
     // that holds unintegrated work. This sits INSIDE teardownPty so it covers ALL
     // teardown routes — a worker that finished (controller kill), crashed, or was
@@ -503,7 +510,7 @@ function teardownPty(id: string): void {
     const worker = liveWorkers.get(id);
     if (worker) {
       liveWorkers.delete(id);
-      void finalizeWorkerWorktree(wtPath, origCwd, worker);
+      void finalizeWorkerWorktree(wtPath, origCwd, worker, subdir);
     } else {
       void removeWorktree(origCwd, wtPath)
         .then(r => { if (!r.ok) console.error('[worktree] removeWorktree failed:', r.error); })
@@ -545,9 +552,9 @@ function informGod(subject: string, body: string, slack?: { channel: string; thr
  *  unintegrated work; otherwise leave it (and its branch) in place and ping god, the
  *  sole integrator. Async + best-effort; on any uncertainty it KEEPS the worktree
  *  (fail-safe — never auto-discard possibly-valuable work). */
-async function finalizeWorkerWorktree(wtPath: string, origCwd: string, worker: WorkerRec): Promise<void> {
+async function finalizeWorkerWorktree(wtPath: string, origCwd: string, worker: WorkerRec, subdir?: string): Promise<void> {
   try {
-    const deps = await unlinkWorktreeDeps(origCwd, wtPath);
+    const deps = await unlinkWorktreeDeps(origCwd, wtPath, subdir);
     if (!deps.ok) console.error('[worktree] dependency unlink failed:', deps.error);
     const work = await worktreeHasUnintegratedWork(wtPath, worker.baseBranch);
     if (work.keep) {
@@ -555,7 +562,7 @@ async function finalizeWorkerWorktree(wtPath: string, origCwd: string, worker: W
       // Track it so the GC sweep can reclaim it (+ scratch dir) once integrated —
       // the worker is gone from liveWorkers by now, so its identity lives here.
       preservedWorktrees.set(wtPath, {
-        workerId: worker.workerId, wtPath, origCwd, baseBranch: worker.baseBranch,
+        workerId: worker.workerId, wtPath, origCwd, subdir, baseBranch: worker.baseBranch,
         scratchDir: workerScratchDir(worker.workerId), slack: worker.slack, preservedAt: Date.now()
       });
       informGod(
@@ -577,7 +584,7 @@ async function finalizeWorkerWorktree(wtPath: string, origCwd: string, worker: W
     // it (its worktree path is now absent) so the sweep's path-gone branch reclaims
     // the scratch after a window — same throttled path the preserved case uses.
     preservedWorktrees.set(wtPath, {
-      workerId: worker.workerId, wtPath, origCwd, baseBranch: worker.baseBranch,
+      workerId: worker.workerId, wtPath, origCwd, subdir, baseBranch: worker.baseBranch,
       scratchDir: workerScratchDir(worker.workerId), slack: worker.slack, preservedAt: Date.now()
     });
   } catch (e) {
@@ -2784,20 +2791,25 @@ async function spawnAgentCore(opts: AgentSpawnOptions, owner: Electron.WebConten
         const br = await getBranch(origCwd);
         const baseBranch = 'current' in br && br.current ? br.current : 'main';
         baseBranchHint = baseBranch;
-        // Worktrees are created from the repo root; the agent then starts in the
-        // same sub-folder it was asked to work in. null → today's behaviour.
-        const repoRoot = (await mainRepoRoot(origCwd)) ?? origCwd;
+        // Anchor on the checkout the agent was launched in (its toplevel: works for a
+        // linked worktree, bare layout, submodule), main repo root only as fallback, and
+        // today's behaviour (origCwd) if both fail. The agent then starts in the same
+        // sub-folder it was asked to work in.
+        let realOrig = origCwd;
+        try { realOrig = realpathSync(origCwd); } catch { /* keep as is */ }
+        const top = await runGit(origCwd, ['rev-parse', '--show-toplevel']);
+        let repoRoot = top.ok && top.stdout.trim() ? top.stdout.trim() : (await mainRepoRoot(origCwd)) ?? origCwd;
+        try { repoRoot = realpathSync(repoRoot); } catch { /* keep as is */ }
         const wt = await addWorktree(repoRoot, wtPath, baseBranch);
         if (wt.ok) {
-          // Canonicalise (symlinked tmp/home dirs) so the relative path is right, and fall
-          // back to the worktree root if the sub-folder isn't tracked (absent from the checkout).
-          let realOrig = origCwd;
-          try { realOrig = realpathSync(origCwd); } catch { /* keep as is */ }
+          // Fall back to the worktree root if the sub-folder isn't tracked (absent from the checkout).
           const startCwd = worktreeCwd(wtPath, repoRoot, realOrig);
           opts.cwd = existsSync(startCwd) ? startCwd : wtPath;
+          const subdir = relative(wtPath, opts.cwd).split(sep).join('/');
           worktreePaths.set(opts.id, wtPath);
           worktreeOrigins.set(opts.id, repoRoot);
-          const deps = await linkWorktreeDeps(repoRoot, wtPath);
+          if (subdir) worktreeSubdirs.set(opts.id, subdir);
+          const deps = await linkWorktreeDeps(repoRoot, wtPath, subdir || undefined);
           if (!deps.ok) console.error('[worktree] dependency link failed:', deps.error);
         } else {
           console.error('[worktree] addWorktree failed:', wt.error);
@@ -5054,7 +5066,7 @@ async function processSpawnRequest(filePath: string): Promise<void> {
     hive: meta, isolate, provider: raw.provider, env: brokerEnv
   };
 
-  let res: { ok: boolean; error?: string; worktreePath?: string };
+  let res: { ok: boolean; error?: string; cwd?: string; worktreePath?: string };
   try {
     res = await spawnAgentCore(spawnOpts, liveWebContents());
   } catch (e) {
@@ -5075,7 +5087,7 @@ async function processSpawnRequest(filePath: string): Promise<void> {
       id: workerId,
       name: meta.name,
       provider: raw.provider ?? 'claude',
-      cwd: res.worktreePath ?? cwd,
+      cwd: res.cwd ?? res.worktreePath ?? cwd,
       command: launch.command,
       role: meta.role,
       worktreePath: res.worktreePath,
@@ -5144,7 +5156,7 @@ async function gcPreservedWorktrees(): Promise<void> {
         continue;
       }
       // (b) Still on disk → reclaim ONLY when provably integrated + clean.
-      const deps = await unlinkWorktreeDeps(e.origCwd, e.wtPath);
+      const deps = await unlinkWorktreeDeps(e.origCwd, e.wtPath, e.subdir);
       if (!deps.ok) { console.error('[worker gc] dependency unlink failed (keeping):', deps.error); continue; }
       let safe: { gc: boolean; detail: string };
       try { safe = await worktreeIsGcSafe(e.wtPath, e.baseBranch); }

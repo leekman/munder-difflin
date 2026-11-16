@@ -11,7 +11,7 @@ export type DepUnlink =
   | { ok: false; error: string };
 
 /** Link the base checkout's dependencies into an isolated worktree. */
-export async function linkWorktreeDeps(baseDir: string, worktreeDir: string): Promise<DepLink> {
+async function linkOne(baseDir: string, worktreeDir: string): Promise<DepLink> {
   const baseNodeModules = join(baseDir, 'node_modules');
   const worktreeNodeModules = join(worktreeDir, 'node_modules');
   if (!existsSync(baseNodeModules)) return { ok: true, skipped: true };
@@ -32,7 +32,7 @@ export async function linkWorktreeDeps(baseDir: string, worktreeDir: string): Pr
 }
 
 /** Remove the dependency link before testing whether a worktree is dirty. */
-export async function unlinkWorktreeDeps(baseDir: string, worktreeDir: string): Promise<DepUnlink> {
+async function unlinkOne(baseDir: string, worktreeDir: string): Promise<DepUnlink> {
   const baseNodeModules = join(baseDir, 'node_modules');
   const worktreeNodeModules = join(worktreeDir, 'node_modules');
 
@@ -52,4 +52,22 @@ export async function unlinkWorktreeDeps(baseDir: string, worktreeDir: string): 
     if (code === 'ENOENT') return { ok: true, removed: false };
     return { ok: false, error: String(error) };
   }
+}
+
+/** Link the checkout's dependencies into the worktree; when the agent works in a
+ *  sub-project (`subdir`, relative to the checkout), link that sub-project's own
+ *  node_modules too. */
+export async function linkWorktreeDeps(baseDir: string, worktreeDir: string, subdir?: string): Promise<DepLink> {
+  const root = await linkOne(baseDir, worktreeDir);
+  if (!root.ok || !subdir) return root;
+  const sub = await linkOne(join(baseDir, subdir), join(worktreeDir, subdir));
+  return sub.ok ? { ok: true, skipped: root.skipped && sub.skipped } : sub;
+}
+
+/** Remove the dependency links (root and, if given, sub-project) before a dirty check. */
+export async function unlinkWorktreeDeps(baseDir: string, worktreeDir: string, subdir?: string): Promise<DepUnlink> {
+  const root = await unlinkOne(baseDir, worktreeDir);
+  if (!root.ok || !subdir) return root;
+  const sub = await unlinkOne(join(baseDir, subdir), join(worktreeDir, subdir));
+  return sub.ok ? { ok: true, removed: root.removed || sub.removed } : sub;
 }

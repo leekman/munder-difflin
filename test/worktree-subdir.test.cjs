@@ -39,8 +39,14 @@ test('a worktree made from a sub-folder starts in the same sub-folder', async ()
   const cwd = worktreeCwd(wt, root, orig);
   assert.equal(cwd, path.join(wt, 'packages', 'x'));
   assert.ok(fs.existsSync(path.join(cwd, 'a.txt')));
-  const info = await resolveProjectInfo(cwd);
-  assert.equal(info.repoRoot, repo);
-  assert.equal(info.isolated, true);
-  assert.equal(info.subdir, 'packages/x');
+  try {
+    const info = await resolveProjectInfo(cwd);
+    assert.equal(info.repoRoot, repo);
+    assert.equal(info.isolated, true);
+    assert.equal(info.subdir, 'packages/x');
+  } finally {
+    try { g(repo, 'worktree', 'remove', '--force', wt); } catch { /* best-effort */ }
+    fs.rmSync(path.dirname(wt), { recursive: true, force: true });
+    fs.rmSync(repo, { recursive: true, force: true });
+  }
 });
