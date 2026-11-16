@@ -85,6 +85,7 @@ export interface SwitchDeps<A extends FloorAgent = Agent> {
   slim(agents: A[]): unknown[];
   /** Cuts a PTY by its pty id, keeping the worktree. */
   parkPty(ptyId: string): Promise<unknown>;
+  /** Drops the entries from the floor; returns their queues as they are NOW. */
   parkAgents(ids: string[]): { parked: unknown[]; queues: Record<string, unknown[]> };
   teamsSave(t: { id?: string; scope: string[]; summary: string; agents: unknown[]; queues: Record<string, unknown[]> }): Promise<SaveResult>;
   teamsForget(scope: string[], id: string): Promise<unknown>;
@@ -92,7 +93,31 @@ export interface SwitchDeps<A extends FloorAgent = Agent> {
   teamsList(scope: string[]): Promise<SavedTeam[]>;
   /** The floor's current team, when it came from an earlier save (composed or resumed). */
   currentTeamId?: string;
+  /** That team as saved (when known): its entries not on the floor are kept,
+   *  and it is only ever forgotten when it holds no saved agent. */
+  currentTeam?: Pick<SavedTeam, 'id' | 'agents' | 'queues'>;
 }
+
+const idOf = (e: unknown): string | undefined => {
+  const id = (e as { id?: unknown } | null)?.id;
+  return typeof id === 'string' ? id : undefined;
+};
+
+/** Queues without their empty entries, for a stable comparison. */
+function nonEmptyQueues(q: Record<string, unknown[]>): Record<string, unknown[]> {
+  return Object.fromEntries(Object.entries(q).filter(([, v]) => Array.isArray(v) && v.length > 0));
+}
+
+function sameQueues(a: Record<string, unknown[]>, b: Record<string, unknown[]>): boolean {
+  const x = nonEmptyQueues(a);
+  const y = nonEmptyQueues(b);
+  const keys = Object.keys(x);
+  return keys.length === Object.keys(y).length && keys.every((k) => JSON.stringify(x[k]) === JSON.stringify(y[k]));
+}
+
+/** A `parkPty` answer for a PTY that was already dead: nothing left to cut. */
+const ptyAlreadyGone = (r: { ok?: boolean; error?: string } | undefined): boolean =>
+  !!r && r.ok === false && typeof r.error === 'string' && r.error.startsWith('no pty');
 
 const errText = (e: unknown): string => (e instanceof Error ? e.message : String(e));
 
@@ -109,7 +134,9 @@ export type SwitchResult =
  * Binding order: snapshot → save (or forget an empty current team) → park
  * every PTY → park the store entries → write the scope → list the known teams
  * of the new scope. A failed save parks nothing. An agent whose PTY could not
- * be parked stays on the floor and leaves the saved team (`notParked`).
+ * be parked stays on the floor and leaves the saved team (`notParked`). Saved
+ * entries of the current team that are not on the floor are kept with their
+ * queues; a team with saved agents is never forgotten.
  */
 export async function switchScope<A extends FloorAgent>(
   deps: SwitchDeps<A>,
@@ -131,63 +158,97 @@ export async function switchScope<A extends FloorAgent>(
   };
   const fromScope = [...from.scope].sort();
   const summary = summaryOfCurrent.trim().slice(0, SUMMARY_MAX) || localSummary(toPark);
+  const teamId = deps.currentTeam?.id ?? deps.currentTeamId;
+  // Saved entries not on the floor (e.g. a resume that failed for them): they
+  // stay in the team with their queues — never dropped by a re-save.
+  const onFloor = new Set(deps.agents().map((a) => a.id));
+  const savedExtras = (deps.currentTeam?.agents ?? []).filter((e) => {
+    const id = idOf(e);
+    return !id || !onFloor.has(id);
+  });
+  const extraQueues: Record<string, unknown[]> = {};
+  for (const e of savedExtras) {
+    const id = idOf(e);
+    const q = id ? deps.currentTeam?.queues?.[id] : undefined;
+    if (id && q?.length) extraQueues[id] = q;
+  }
+  const teamOf = (list: A[], queues: Record<string, unknown[]> = queuesOf(list)) => ({
+    agents: [...deps.slim(list), ...savedExtras],
+    queues: { ...queues, ...extraQueues }
+  });
 
   // (2) Save the outgoing team under the OLD scope.
   let savedId: string | null = null;
   try {
     if (toPark.length > 0) {
       const res = await deps.teamsSave({
-        ...(deps.currentTeamId ? { id: deps.currentTeamId } : {}),
-        scope: fromScope, summary, agents: deps.slim(toPark), queues: queuesOf(toPark)
+        ...(teamId ? { id: teamId } : {}),
+        scope: fromScope, summary, ...teamOf(toPark)
       });
       if (!res.ok) return { ok: false, error: res.error };
       savedId = res.team.id;
-    } else if (deps.currentTeamId) {
-      // Composed but never launched: not worth keeping in the history.
-      await deps.teamsForget(fromScope, deps.currentTeamId);
+    } else if (deps.currentTeam && deps.currentTeam.agents.length === 0) {
+      // Composed but never launched (nothing saved in it): not worth keeping.
+      // A team with saved agents is never forgotten automatically.
+      await deps.teamsForget(fromScope, deps.currentTeam.id);
     }
   } catch (e) {
     return { ok: false, error: errText(e) };
   }
 
-  // (3) Cut the PTYs (worktrees kept). A PTY that would not die keeps its card.
+  // (3) Cut the PTYs (worktrees kept). A PTY that would not die keeps its card;
+  // one already dead (« no pty ») has nothing left to cut and counts as parked.
   const failed = new Set<string>();
   for (const a of toPark) {
     if (!a.ptyId) continue;
     try {
-      const r = await deps.parkPty(a.ptyId) as { ok?: boolean } | undefined;
-      if (r && r.ok === false) failed.add(a.id);
+      const r = await deps.parkPty(a.ptyId) as { ok?: boolean; error?: string } | undefined;
+      if (r && r.ok === false && !ptyAlreadyGone(r)) failed.add(a.id);
     } catch {
       failed.add(a.id);
     }
   }
   const parked = toPark.filter((a) => !failed.has(a.id));
+  // Whether the saved team still describes the parked agents (for (4)).
+  let holdsParked = !!savedId;
   if (failed.size > 0 && savedId) {
     try {
       if (parked.length > 0) {
-        await deps.teamsSave({ id: savedId, scope: fromScope, summary, agents: deps.slim(parked), queues: queuesOf(parked) });
-      } else if (!deps.currentTeamId) {
+        await deps.teamsSave({ id: savedId, scope: fromScope, summary, ...teamOf(parked) });
+      } else if (!teamId) {
         // Nobody left: a team created by this switch would be empty history.
         await deps.teamsForget(fromScope, savedId);
+        holdsParked = false;
+      } else {
+        // Nobody left and a pre-existing team: leave it as saved (never empty);
+        // resume treats agents already on the floor as present.
+        holdsParked = false;
       }
-      // Nobody left and a pre-existing team: leave it as saved (never empty);
-      // resume treats agents already on the floor as present.
     } catch { /* resume skips an agent already on the floor */ }
   }
 
-  // (4) Drop the parked entries from the floor.
-  deps.parkAgents(parked.map((a) => a.id));
+  // (4) Drop the parked entries from the floor. Their queues are read again at
+  // this point: a message queued while the PTYs were cut must travel too.
+  const out = deps.parkAgents(parked.map((a) => a.id));
+  if (savedId && holdsParked && parked.length > 0 && !sameQueues(out.queues, queuesOf(parked))) {
+    try {
+      await deps.teamsSave({ id: savedId, scope: fromScope, summary, ...teamOf(parked, nonEmptyQueues(out.queues)) });
+    } catch { /* the snapshot saved at (2) stands */ }
+  }
   const notParked = toPark.filter((a) => failed.has(a.id)).map((a) => a.name);
 
   // (5) New scope, (6) its remembered teams.
+  let set: { ok: boolean; error?: string };
   try {
-    const set = await deps.scopeSet({ enabled: to.enabled, scope: [...to.scope].sort() });
-    if (!set.ok) {
-      const known = await deps.teamsList(fromScope).catch(() => [] as SavedTeam[]);
-      return { ok: false, error: set.error ?? 'scope not saved', known, notParked };
-    }
-    return { ok: true, known: await deps.teamsList([...to.scope].sort()), notParked };
+    set = await deps.scopeSet({ enabled: to.enabled, scope: [...to.scope].sort() });
   } catch (e) {
     return { ok: false, error: errText(e) };
   }
+  if (!set.ok) {
+    const known = await deps.teamsList(fromScope).catch(() => [] as SavedTeam[]);
+    return { ok: false, error: set.error ?? 'scope not saved', known, notParked };
+  }
+  // The scope is written: the store must follow it even if the list fails.
+  const known = await deps.teamsList([...to.scope].sort()).catch(() => [] as SavedTeam[]);
+  return { ok: true, known, notParked };
 }

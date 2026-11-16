@@ -53,7 +53,14 @@ export async function applyFloorScope(to: FloorScope, confirmedIds: readonly str
     return { ok: true };
   }
   const currentTeamId = st.currentTeamId ?? undefined;
-  const summary = st.knownTeams.find((t) => t.id === currentTeamId)?.summary ?? '';
+  // The current team as saved: its entries not on the floor are kept, and it is
+  // never forgotten unless known to be empty. Not in the store → ask main.
+  let currentTeam = currentTeamId ? st.knownTeams.find((t) => t.id === currentTeamId) : undefined;
+  if (currentTeamId && !currentTeam) {
+    currentTeam = (await window.cth.teamsList([...from.scope].sort()).catch(() => [] as SavedTeam[]))
+      .find((t) => t.id === currentTeamId);
+  }
+  const summary = currentTeam?.summary ?? '';
   const res = await switchScope<Agent>({
     agents: () => useStore.getState().agents,
     queues: () => useStore.getState().messageQueues,
@@ -65,7 +72,8 @@ export async function applyFloorScope(to: FloorScope, confirmedIds: readonly str
     teamsForget: (scope, id) => window.cth.teamsForget(scope, id),
     scopeSet: (s) => window.cth.scopeSet(s),
     teamsList: (scope) => window.cth.teamsList(scope),
-    currentTeamId
+    currentTeamId,
+    currentTeam
   }, from, to, summary, confirmedIds);
   const next = useStore.getState();
   if (!res.ok) {

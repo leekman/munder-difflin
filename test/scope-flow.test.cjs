@@ -80,7 +80,12 @@ function fakeDeps({ agents: list, ...over } = {}) {
     queues: () => ({ jim: [{ id: 'q1', text: 'hello' }], god: [{ id: 'q2', text: 'boss' }] }),
     slim: (list) => list.map((a) => ({ ...a, slim: true })),
     parkPty: async (id) => { calls.push(`parkPty:${id}`); return { ok: true }; },
-    parkAgents: (ids) => { calls.push(`parkAgents:${ids.join(',')}`); return { parked: [], queues: {} }; },
+    // Like the store: hands back the current queues of the parked ids.
+    parkAgents: (ids) => {
+      calls.push(`parkAgents:${ids.join(',')}`);
+      const q = deps.queues();
+      return { parked: [], queues: Object.fromEntries(ids.filter((id) => q[id]).map((id) => [id, q[id]])) };
+    },
     teamsSave: async (t) => { calls.push('teamsSave'); deps.saved = t; return { ok: true, team: { id: 'T1' } }; },
     teamsForget: async (scope, id) => { calls.push(`teamsForget:${id}`); return true; },
     scopeSet: async (s) => { calls.push('scopeSet'); deps.scope = s; return { ok: true }; },
@@ -142,10 +147,90 @@ test('switchScope with no agents skips save', async () => {
   assert.deepEqual(calls, ['parkAgents:', 'scopeSet', 'teamsList']);
 });
 
-test('switchScope with no agents forgets a never-launched current team', async () => {
-  const { deps, calls } = fakeDeps({ agents: [agent('god', { isGod: true })], currentTeamId: 'T0' });
+const savedTeam = (id, agents, queues = {}) => ({ id, scope: FROM.scope, summary: 'S', agents, queues });
+
+test('switchScope with no agents forgets a never-launched current team (no saved agent)', async () => {
+  const { deps, calls } = fakeDeps({
+    agents: [agent('god', { isGod: true })], currentTeamId: 'T0', currentTeam: savedTeam('T0', [])
+  });
   await switchScope(deps, FROM, TO, '', []);
   assert.deepEqual(calls, ['teamsForget:T0', 'parkAgents:', 'scopeSet', 'teamsList']);
+});
+
+test('switchScope never forgets a current team that has saved agents, even with no live worker', async () => {
+  const { deps, calls } = fakeDeps({
+    agents: [agent('god', { isGod: true })], currentTeamId: 'T0',
+    currentTeam: savedTeam('T0', [{ id: 'jim', name: 'jim' }])
+  });
+  const r = await switchScope(deps, FROM, TO, '', []);
+  assert.equal(r.ok, true);
+  assert.deepEqual(calls, ['parkAgents:', 'scopeSet', 'teamsList']);
+});
+
+test('switchScope never forgets a current team whose saved content is unknown', async () => {
+  const { deps, calls } = fakeDeps({ agents: [agent('god', { isGod: true })], currentTeamId: 'T0' });
+  await switchScope(deps, FROM, TO, '', []);
+  assert.deepEqual(calls, ['parkAgents:', 'scopeSet', 'teamsList']);
+});
+
+test('switchScope keeps the saved agents (and queues) that are not on the floor', async () => {
+  const { deps } = fakeDeps({
+    currentTeamId: 'T0',
+    currentTeam: savedTeam('T0',
+      [{ id: 'jim', name: 'jim', old: true }, { id: 'kevin', name: 'kevin' }],
+      { jim: [{ id: 'old' }], kevin: [{ id: 'qk' }] })
+  });
+  await switchScope(deps, FROM, TO, '', ALL);
+  assert.equal(deps.saved.id, 'T0');
+  // Live entries win; kevin (failed resume, not on the floor) is kept with his queue.
+  assert.deepEqual(deps.saved.agents.map((a) => a.id), ['jim', 'pam', 'ghost', 'kevin']);
+  assert.equal(deps.saved.agents[0].old, undefined);
+  assert.deepEqual(deps.saved.queues, { jim: [{ id: 'q1', text: 'hello' }], kevin: [{ id: 'qk' }] });
+});
+
+test('switchScope: a partial park re-save keeps the saved agents not on the floor', async () => {
+  const saves = [];
+  const { deps } = fakeDeps({
+    currentTeamId: 'T0',
+    currentTeam: savedTeam('T0', [{ id: 'kevin', name: 'kevin' }], { kevin: [{ id: 'qk' }] }),
+    parkPty: async (id) => (id === 'pty-pam' ? { ok: false, error: 'busy' } : { ok: true }),
+    teamsSave: async (t) => { saves.push(t); return { ok: true, team: { id: 'T0' } }; }
+  });
+  const r = await switchScope(deps, FROM, TO, '', ALL);
+  assert.deepEqual(r.notParked, ['pam']);
+  assert.deepEqual(saves[1].agents.map((a) => a.id), ['jim', 'ghost', 'kevin']);
+  assert.deepEqual(saves[1].queues, { jim: [{ id: 'q1', text: 'hello' }], kevin: [{ id: 'qk' }] });
+});
+
+test('switchScope: a PTY already gone (« no pty ») counts as parked', async () => {
+  const { deps, calls } = fakeDeps({
+    parkPty: async (id) => { calls.push(`parkPty:${id}`); return id === 'pty-pam' ? { ok: false, error: 'no pty: pty-pam' } : { ok: true }; }
+  });
+  const r = await switchScope(deps, FROM, TO, '', ALL);
+  assert.deepEqual(r, { ok: true, known: [{ id: 'K1' }], notParked: [] });
+  assert.ok(calls.includes('parkAgents:jim,pam,ghost'));
+});
+
+test('switchScope re-saves the team when the parked queues differ from the snapshot', async () => {
+  const saves = [];
+  let q = { jim: [{ id: 'q1' }] };
+  const { deps, calls } = fakeDeps({
+    queues: () => q,
+    parkPty: async (id) => { calls.push(`parkPty:${id}`); q = { jim: [{ id: 'q1' }, { id: 'q-late' }] }; return { ok: true }; },
+    teamsSave: async (t) => { calls.push('teamsSave'); saves.push(t); return { ok: true, team: { id: 'T1' } }; }
+  });
+  const r = await switchScope(deps, FROM, TO, '', ALL);
+  assert.equal(r.ok, true);
+  assert.deepEqual(calls, ['teamsSave', 'parkPty:pty-jim', 'parkPty:pty-pam', 'parkAgents:jim,pam,ghost', 'teamsSave', 'scopeSet', 'teamsList']);
+  assert.equal(saves[1].id, 'T1');
+  assert.deepEqual(saves[1].agents.map((a) => a.id), ['jim', 'pam', 'ghost']);
+  assert.deepEqual(saves[1].queues, { jim: [{ id: 'q1' }, { id: 'q-late' }] });
+});
+
+test('switchScope: scope written but the team list fails -> ok with no known team', async () => {
+  const { deps, calls } = fakeDeps({ teamsList: async () => { calls.push('teamsList'); throw new Error('ipc'); } });
+  const r = await switchScope(deps, FROM, TO, '', ALL);
+  assert.deepEqual(r, { ok: true, known: [], notParked: [] });
 });
 
 test('switchScope: scopeSet failure after parking offers the just-saved team', async () => {
