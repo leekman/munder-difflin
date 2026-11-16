@@ -191,9 +191,9 @@ test('removes linked dependencies before worker retention checks', () => {
     .join('\n');
 
   const beforeRetention = activeSource.slice(0, activeSource.indexOf('const work = await worktreeHasUnintegratedWork'));
-  assert.match(beforeRetention, /await unlinkWorktreeDeps\(origCwd, wtPath\)/);
+  assert.match(beforeRetention, /await unlinkWorktreeDeps\(origCwd, wtPath, subdir\)/);
   const beforeGc = activeSource.slice(0, activeSource.indexOf('safe = await worktreeIsGcSafe'));
-  assert.match(beforeGc, /await unlinkWorktreeDeps\(e\.origCwd, e\.wtPath\)/);
+  assert.match(beforeGc, /await unlinkWorktreeDeps\(e\.origCwd, e\.wtPath, e\.subdir\)/);
 });
 
 test('uses a Windows junction for the directory link', () => {
