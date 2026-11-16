@@ -26,7 +26,7 @@ import {
   getLogGraph, getCommitFiles, getFileAtRev, compareRefs, listWorktrees, checkoutRef
 } from './git';
 import { readFloorScope, writeFloorScope, listTeams, saveTeam, touchTeam, forgetTeam } from './teamStore';
-import { detectSubprojects, rootHasManifest, type Subproject } from './subprojects';
+import { detectSubprojects, resolveWorkdir, rootHasManifest, type Subproject } from './subprojects';
 import { resolveProjectInfo, worktreeCwd, type ProjectInfo } from './projectInfo';
 import { linkWorktreeDeps, unlinkWorktreeDeps } from './worktreeDeps';
 import { HiveManager, type AgentMeta, type HiveMessage, type HiveTask } from './hive';
@@ -3737,6 +3737,11 @@ ipcMain.handle('floor:subprojects', async (evt, arg: unknown) => {
   if (!repo) return { items: [], truncated: false, rootHasManifest: true };
   const refresh = !!arg && typeof arg === 'object' && (arg as { refresh?: unknown }).refresh === true;
   return subprojectsOf(repo, refresh);
+});
+/** Starting folder of a hire: checked against the SENDER's floor repo, never a sent path. */
+ipcMain.handle('floor:resolveWorkdir', async (evt, rel: unknown) => {
+  const repo = teamRepoOf(evt.sender);
+  return repo ? resolveWorkdir(repo, rel) : null;
 });
 /** Scope/teams storage: repo is always the sender's floor, scope validated in teamStore. */
 function scopeCtx(evt: Electron.IpcMainInvokeEvent): { repo: string; home: string } | null {

@@ -216,3 +216,10 @@ test('restored floors are limited to repos of the running harness', () => {
   const start = source.indexOf('app.whenReady().then(');
   assert.match(source.slice(start), /restored = \(cfg\.openFloors \?\? \[\]\)\.filter\(\(r\) => existsSync\(r\) && \(!links\[r\] \|\| links\[r\] === home\)\)/);
 });
+
+test('floor:resolveWorkdir resolves against the sender floor repo, never a sent repo', () => {
+  const body = handlerBody(main(), "ipcMain.handle('floor:resolveWorkdir'");
+  assert.match(body, /teamRepoOf\(evt\.sender\)/);
+  assert.match(body, /resolveWorkdir\(repo, rel\)/);
+  assert.match(preload(), /floorResolveWorkdir: \(rel: string\)/);
+});

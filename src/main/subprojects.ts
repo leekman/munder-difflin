@@ -1,6 +1,8 @@
 import { existsSync, readdirSync, type Dirent } from 'node:fs';
-import { join } from 'node:path';
+import { realpath, stat } from 'node:fs/promises';
+import { join, sep } from 'node:path';
 import { runGit } from './git';
+import { HIRE_LIMITS, isSafeRelPath } from '../shared/hire';
 
 export interface Subproject { path: string; label: string; group: string; kinds: string[] }
 export interface DetectOptions {
@@ -95,4 +97,22 @@ export async function detectSubprojects(
     a.group === b.group ? a.label.localeCompare(b.label) : a.group.localeCompare(b.group));
   if (items.length > max) { items = items.slice(0, max); truncated = true; }
   return { items, truncated };
+}
+
+/** A floor-relative `workdir` sent by the renderer, checked on disk: relative,
+ *  no `..`, ≤ 200 chars, an existing folder whose realpath stays inside the
+ *  repo's (a symlink out of the repo is refused). Returns `<repo>/<rel>` (the
+ *  path as the floor names it), or null. */
+export async function resolveWorkdir(repo: string, rel: unknown): Promise<string | null> {
+  if (typeof rel !== 'string') return null;
+  const clean = rel.replace(/\/+$/, '');
+  if (!clean || clean.length > HIRE_LIMITS.workdir || !isSafeRelPath(clean)) return null;
+  try {
+    const abs = join(repo, clean);
+    const [root, real] = await Promise.all([realpath(repo), realpath(abs)]);
+    if (real !== root && !real.startsWith(root + sep)) return null;
+    return (await stat(real)).isDirectory() ? abs : null;
+  } catch {
+    return null;
+  }
 }

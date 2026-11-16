@@ -31,7 +31,7 @@ import {
   isClaudeProvider
 } from '@/store/config';
 import { useRtl } from '@/i18n/useDirection';
-import { existingAgentsOf, initialHireCwd, modelIdsByProvider, workdirOf } from './composeTeamFlow';
+import { existingAgentsOf, modelIdsByProvider, repoSubPath, seedHireCwd, workdirOf } from './composeTeamFlow';
 
 const ACCENTS: AccentColorName[] = ['coral', 'mint', 'sky', 'lemon', 'lilac', 'peach'];
 
@@ -199,7 +199,7 @@ export function AddAgentModal({ onClose, config, onConfigChange }: AddAgentModal
   const [cwd, setCwd] = useState<string>(floorRepo ?? config.registeredRepos[0] ?? '');
   // On a monorepo floor: the scope's sub-projects (shortcuts when ≥ 2), and the
   // starting folder re-seeded per hire — the hire's workdir when it exists, else
-  // the only sub-project of the scope, else the repo root.
+  // the only sub-project of the scope, else the repo root (each checked by main).
   const floorScope = useStore(s => s.floorScope);
   const scopePaths = floorRepo && floorScope?.enabled ? floorScope.scope : [];
   const cwdSeedRef = useRef(0);
@@ -207,17 +207,8 @@ export function AddAgentModal({ onClose, config, onConfigChange }: AddAgentModal
     if (!floorRepo) return;
     const repo = floorRepo;
     const seq = ++cwdSeedRef.current;
-    const workdir = pendingHire?.workdir;
-    void (async () => {
-      let exists = false;
-      if (workdir) {
-        try {
-          const st = await window.cth.statAbs(initialHireCwd(repo, workdir, true, []));
-          exists = st.exists && !st.isFile;
-        } catch { /* treated as missing */ }
-      }
-      if (seq === cwdSeedRef.current) setCwd(initialHireCwd(repo, workdir, exists, scopePaths));
-    })();
+    void seedHireCwd(repo, pendingHire?.workdir, scopePaths, (rel) => window.cth.floorResolveWorkdir(rel))
+      .then((dir) => { if (seq === cwdSeedRef.current) setCwd(dir); });
   // Seeded per queue head (like the other fields), not on every scope render.
   // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [pendingHire]);
@@ -911,7 +902,7 @@ export function AddAgentModal({ onClose, config, onConfigChange }: AddAgentModal
                       {floorRepo && scopePaths.length >= 2 && (
                         <div style={{ display: 'flex', gap: 6, flexWrap: 'wrap', alignItems: 'center', marginTop: 6 }}>
                           <span style={{ fontSize: 12, color: 'var(--cth-ink-500)' }}>Sous-projets du périmètre :</span>
-                          {[floorRepo, ...scopePaths.map((p) => initialHireCwd(floorRepo as string, p, true, []))].map((dir, i) => (
+                          {[floorRepo, ...scopePaths.map((p) => repoSubPath(floorRepo as string, p))].map((dir, i) => (
                             <button
                               key={dir}
                               onClick={() => setCwd(dir)}

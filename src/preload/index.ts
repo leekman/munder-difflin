@@ -1282,6 +1282,9 @@ const api = {
     items: Array<{ path: string; label: string; group: string; kinds: string[] }>;
     truncated: boolean; rootHasManifest: boolean;
   }> => ipcRenderer.invoke('floor:subprojects', refresh ? { refresh: true } : undefined),
+  /** A floor-relative folder checked by main: `<repo>/<rel>` when it is an
+   *  existing folder whose realpath stays in this floor's repo, else null. */
+  floorResolveWorkdir: (rel: string): Promise<string | null> => ipcRenderer.invoke('floor:resolveWorkdir', rel),
   /** Monorepo scope of this floor (stored by main). */
   scopeGet: (): Promise<{ enabled: boolean; scope: string[]; teamId?: string } | null> => ipcRenderer.invoke('scope:get'),
   scopeSet: (s: { enabled: boolean; scope: string[]; teamId?: string }): Promise<{ ok: boolean; error?: string }> => ipcRenderer.invoke('scope:set', s),

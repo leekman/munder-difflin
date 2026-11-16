@@ -63,3 +63,28 @@ test('rootHasManifest', () => {
   assert.equal(rootHasManifest(tree(['package.json'])), true);
   assert.equal(rootHasManifest(tree(['src/a.ts'])), false);
 });
+
+const { resolveWorkdir } = loadTs('src/main/subprojects.ts');
+
+test('resolveWorkdir: a relative sub-folder inside the repo -> its absolute path', async () => {
+  const root = tree(['apps/web/package.json', 'notes.txt']);
+  assert.equal(await resolveWorkdir(root, 'apps/web'), path.join(root, 'apps/web'));
+  assert.equal(await resolveWorkdir(root, 'apps/web/'), path.join(root, 'apps/web'));
+});
+
+test('resolveWorkdir: unsafe, missing, file or too long -> null', async () => {
+  const root = tree(['apps/web/package.json', 'notes.txt']);
+  for (const rel of ['', '../x', 'apps/../..', '/etc', 'apps\\web', 'nope', 'notes.txt', 'a'.repeat(201), 42, null]) {
+    assert.equal(await resolveWorkdir(root, rel), null, String(rel));
+  }
+});
+
+test('resolveWorkdir: a symlink pointing outside the repo -> null', async () => {
+  const root = tree(['apps/web/package.json']);
+  const outside = fs.mkdtempSync(path.join(os.tmpdir(), 'outside-'));
+  fs.symlinkSync(outside, path.join(root, 'apps/escape'));
+  assert.equal(await resolveWorkdir(root, 'apps/escape'), null);
+  // A symlink that stays inside the repo is fine.
+  fs.symlinkSync(path.join(root, 'apps/web'), path.join(root, 'apps/alias'));
+  assert.equal(await resolveWorkdir(root, 'apps/alias'), path.join(root, 'apps/alias'));
+});

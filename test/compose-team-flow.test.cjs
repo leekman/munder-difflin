@@ -178,11 +178,22 @@ test('workdirOf: relative path from the floor repo, only strictly inside it', ()
   assert.equal(workdirOf('/r/mono', '/r/mono/' + 'x'.repeat(201)), undefined);
 });
 
-test('initialHireCwd: existing hire workdir, else single-scope sub-project, else repo', () => {
-  const { initialHireCwd } = loadTs('src/renderer/src/components/composeTeamFlow.ts');
-  assert.equal(initialHireCwd('/r/mono', 'apps/web', true, ['packages/a']), '/r/mono/apps/web');
-  assert.equal(initialHireCwd('/r/mono', 'apps/web', false, ['packages/a']), '/r/mono/packages/a');
-  assert.equal(initialHireCwd('/r/mono', undefined, false, ['packages/a']), '/r/mono/packages/a');
-  assert.equal(initialHireCwd('/r/mono', undefined, false, ['packages/a', 'packages/b']), '/r/mono');
-  assert.equal(initialHireCwd('/r/mono', undefined, false, []), '/r/mono');
+test('seedHireCwd: hire workdir checked by main, else single-scope sub-project, else repo', async () => {
+  const { seedHireCwd } = loadTs('src/renderer/src/components/composeTeamFlow.ts');
+  const asked = [];
+  const ok = (valid) => async (rel) => { asked.push(rel); return valid.includes(rel) ? `/r/mono/${rel}` : null; };
+  assert.equal(await seedHireCwd('/r/mono', 'apps/web', ['packages/a'], ok(['apps/web', 'packages/a'])), '/r/mono/apps/web');
+  // Refused by main (missing, or a symlink out of the repo) -> next candidate.
+  assert.equal(await seedHireCwd('/r/mono', 'apps/web', ['packages/a'], ok(['packages/a'])), '/r/mono/packages/a');
+  assert.equal(await seedHireCwd('/r/mono', undefined, ['packages/a'], ok(['packages/a'])), '/r/mono/packages/a');
+  assert.equal(await seedHireCwd('/r/mono', 'apps/web', ['packages/a'], ok([])), '/r/mono');
+  assert.equal(await seedHireCwd('/r/mono', undefined, ['packages/a', 'packages/b'], ok(['packages/a'])), '/r/mono');
+  assert.equal(await seedHireCwd('/r/mono', undefined, [], ok([])), '/r/mono');
+  // A throwing check counts as a refusal.
+  assert.equal(await seedHireCwd('/r/mono', 'apps/web', [], async () => { throw new Error('ipc'); }), '/r/mono');
+});
+
+test('repoSubPath joins a scope path under the repo', () => {
+  const { repoSubPath } = loadTs('src/renderer/src/components/composeTeamFlow.ts');
+  assert.equal(repoSubPath('/r/mono/', 'packages/a'), '/r/mono/packages/a');
 });

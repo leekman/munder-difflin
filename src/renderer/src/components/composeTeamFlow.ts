@@ -124,16 +124,25 @@ export function workdirOf(repo: string | null | undefined, cwd: string): string 
   return rel;
 }
 
-/** AddAgentModal's starting folder on a floor: the hire's `workdir` when it
- *  exists, else the scope's only sub-project, else the repo root. */
-export function initialHireCwd(
+/** `<repo>/<rel>` (display and shortcuts; never trusted as a spawn check). */
+export function repoSubPath(repo: string, rel: string): string {
+  return `${trimSlashes(repo)}/${rel}`;
+}
+
+/** AddAgentModal's starting folder on a floor: the hire's `workdir`, else the
+ *  scope's only sub-project, else the repo root. Each candidate is checked by
+ *  main (`resolve` = `floorResolveWorkdir`: an existing folder whose realpath
+ *  stays in the floor repo); a refusal or an error moves to the next one. */
+export async function seedHireCwd(
   repo: string,
   hireWorkdir: string | undefined,
-  hireWorkdirExists: boolean,
-  scope: readonly string[]
-): string {
-  const root = trimSlashes(repo);
-  if (hireWorkdir && hireWorkdirExists) return `${root}/${hireWorkdir}`;
-  if (scope.length === 1) return `${root}/${scope[0]}`;
+  scope: readonly string[],
+  resolve: (rel: string) => Promise<string | null>
+): Promise<string> {
+  for (const rel of [hireWorkdir, scope.length === 1 ? scope[0] : undefined]) {
+    if (!rel) continue;
+    const abs = await resolve(rel).catch(() => null);
+    if (abs) return abs;
+  }
   return repo;
 }
