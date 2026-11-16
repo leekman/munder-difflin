@@ -98,7 +98,6 @@ export async function applyFloorScope(to: FloorScope, confirmedIds: readonly str
 
 /** One resume at a time, whichever card or button started it. */
 let resuming = false;
-export const isResuming = (): boolean => resuming;
 
 /** Respawn a remembered team: concurrent spawns, agents added in team order,
  *  queues given back then cleared from the saved team (never replayed twice),

@@ -6,6 +6,7 @@ import {
 } from '../shared/teamPrompt';
 import { HIRE_LIMITS, HIRE_PROVIDERS, isSafeRelPath, validateHireManifest, type HireManifest } from '../shared/hire';
 import { repoSlug } from './roster';
+import { MAX_SCOPE } from '../shared/scopeLimits';
 
 export type TeamRunner = (prompt: string) => Promise<{ ok: boolean; text?: string; error?: string }>;
 
@@ -55,7 +56,7 @@ export const TEAM_INPUT_CAPS = {
   answerChars: 2000,
   analysisChars: 6000,
   manifests: TEAM_SIZE.max,
-  scope: 40
+  scope: MAX_SCOPE
 } as const;
 
 /** Untrusted renderer input → a bounded TeamPromptInput for `repoRoot` (the

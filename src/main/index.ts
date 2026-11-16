@@ -2798,7 +2798,10 @@ async function spawnAgentCore(opts: AgentSpawnOptions, owner: Electron.WebConten
       if (!resolve(wtPath).startsWith(resolve(wtRoot) + sep)) {
         console.error('[worktree] refusing unsafe worktree path for id:', opts.hive?.id ?? opts.id);
       } else {
-        const br = await getBranch(origCwd);
+        const [br, top] = await Promise.all([
+          getBranch(origCwd),
+          runGit(origCwd, ['rev-parse', '--show-toplevel'])
+        ]);
         const baseBranch = 'current' in br && br.current ? br.current : 'main';
         baseBranchHint = baseBranch;
         // Anchor on the checkout the agent was launched in (its toplevel: works for a
@@ -2807,7 +2810,6 @@ async function spawnAgentCore(opts: AgentSpawnOptions, owner: Electron.WebConten
         // sub-folder it was asked to work in.
         let realOrig = origCwd;
         try { realOrig = realpathSync(origCwd); } catch { /* keep as is */ }
-        const top = await runGit(origCwd, ['rev-parse', '--show-toplevel']);
         let repoRoot = top.ok && top.stdout.trim() ? top.stdout.trim() : (await mainRepoRoot(origCwd)) ?? origCwd;
         try { repoRoot = realpathSync(repoRoot); } catch { /* keep as is */ }
         const wt = await addWorktree(repoRoot, wtPath, baseBranch);
@@ -3720,13 +3722,16 @@ function teamRepoOf(sender: Electron.WebContents): string | null {
   const root = floors.repoOf(sender.id);
   return root && existsSync(root) ? root : null;
 }
-const subprojectsCache = new Map<string, { items: Subproject[]; truncated: boolean; rootHasManifest: boolean }>();
-async function subprojectsOf(repo: string, refresh = false): Promise<{ items: Subproject[]; truncated: boolean; rootHasManifest: boolean }> {
+type SubprojectScan = { items: Subproject[]; truncated: boolean; rootHasManifest: boolean };
+/** Holds the PROMISE, so concurrent callers share one scan. */
+const subprojectsCache = new Map<string, Promise<SubprojectScan>>();
+function subprojectsOf(repo: string, refresh = false): Promise<SubprojectScan> {
   const hit = refresh ? undefined : subprojectsCache.get(repo);
   if (hit) return hit;
-  const res = { ...(await detectSubprojects(repo)), rootHasManifest: rootHasManifest(repo) };
-  subprojectsCache.set(repo, res);
-  return res;
+  const p = detectSubprojects(repo).then((r) => ({ ...r, rootHasManifest: rootHasManifest(repo) }));
+  subprojectsCache.set(repo, p);
+  p.catch(() => { if (subprojectsCache.get(repo) === p) subprojectsCache.delete(repo); });
+  return p;
 }
 async function teamInput(raw: unknown, repoRoot: string): Promise<TeamPromptInput | null> {
   const allowedScope = new Set((await subprojectsOf(repoRoot)).items.map((i) => i.path));

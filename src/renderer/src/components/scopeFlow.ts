@@ -222,15 +222,15 @@ export async function switchScope<A extends FloorAgent>(
   // (3) Cut the PTYs (worktrees kept). A PTY that would not die keeps its card;
   // one already dead (« no pty ») has nothing left to cut and counts as parked.
   const failed = new Set<string>();
-  for (const a of toPark) {
-    if (!a.ptyId) continue;
+  await Promise.all(toPark.map(async (a) => {
+    if (!a.ptyId) return;
     try {
       const r = await deps.parkPty(a.ptyId) as { ok?: boolean; error?: string } | undefined;
       if (r && r.ok === false && !ptyAlreadyGone(r)) failed.add(a.id);
     } catch {
       failed.add(a.id);
     }
-  }
+  }));
   const parked = toPark.filter((a) => !failed.has(a.id));
   // Whether the saved team still describes the parked agents (for (4)).
   let holdsParked = !!savedId;
@@ -335,12 +335,14 @@ export async function resumeSavedTeam<E extends { id: string; name: string }, A 
   if (back.size + alreadyHere > 0) {
     deps.setCurrentTeam(team.id);
     try {
-      await deps.teamsTouch(team.scope, team.id);
       // Queues given back to the store leave the file so a later resume can
       // never deliver them twice; agents that failed to respawn keep theirs.
+      // A save already bumps usedAt, so touch only when nothing else is written.
       const kept = Object.fromEntries(Object.entries(queues).filter(([id]) => !back.has(id) && !deps.isOnFloor(id)));
       if (Object.keys(kept).length !== Object.keys(queues).length) {
         await deps.teamsSave({ id: team.id, scope: team.scope, summary: team.summary, agents: team.agents, queues: kept });
+      } else {
+        await deps.teamsTouch(team.scope, team.id);
       }
     } catch (e) {
       deps.warn?.('[scope] could not update the resumed team', e);

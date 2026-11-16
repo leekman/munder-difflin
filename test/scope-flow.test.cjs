@@ -387,7 +387,7 @@ test('resumeSavedTeam gives back the queues of respawned agents and re-saves the
     respawn: async (e) => (e.id === 'kevin' ? { agent: null, error: 'spawn failed' } : { agent: { id: e.id } })
   });
   const notes = await resumeSavedTeam(deps, TEAM);
-  assert.deepEqual(calls, ['add:jim', 'add:pam', 'restoreQueues', 'current:T0', 'touch:T0', 'teamsSave', 'teamsList', 'known']);
+  assert.deepEqual(calls, ['add:jim', 'add:pam', 'restoreQueues', 'current:T0', 'teamsSave', 'teamsList', 'known']);
   assert.deepEqual(deps.restored, { jim: [{ id: 'qj' }], pam: [{ id: 'qp' }] });
   // Kevin failed: his entry and his queue stay in the file.
   assert.deepEqual(deps.saved.agents, TEAM.agents);
@@ -404,7 +404,7 @@ test('resumeSavedTeam: « already exists » with the agent on the floor counts a
   assert.deepEqual(notes, []);
   assert.deepEqual(deps.restored, {});
   // Jim is on the floor: his queue leaves the file (his live queue is the store's).
-  assert.deepEqual(calls, ['restoreQueues', 'current:T0', 'touch:T0', 'teamsSave', 'teamsList', 'known']);
+  assert.deepEqual(calls, ['restoreQueues', 'current:T0', 'teamsSave', 'teamsList', 'known']);
   assert.deepEqual(deps.saved.queues, {});
 });
 

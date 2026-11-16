@@ -96,7 +96,7 @@ export function workdirOptions(scope: readonly string[], items: readonly Subproj
   ];
 }
 
-export const SCOPE_GONE = "Aucun sous-projet du périmètre n'existe plus — change le périmètre.";
+const SCOPE_GONE = "Aucun sous-projet du périmètre n'existe plus — change le périmètre.";
 
 /** Scope to send with an analysis: [] (whole repo) when the monorepo mode is
  *  off or the scope empty; otherwise the still-detected paths. A non-empty

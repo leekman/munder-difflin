@@ -17,11 +17,11 @@ import {
 } from './hire';
 import { MCP_CATALOG } from './mcpCatalog';
 import { EFFORT_LEVELS, effortLevelsFor } from './effort';
+import { MAX_TEAM_SUMMARY } from './scopeLimits';
 
 const MAX_ANALYSIS = 6000;
 const MAX_QUESTIONS = 3;
 const MAX_WHY = 200;
-const MAX_TEAM_SUMMARY = 300;
 
 export interface TeamPromptInput {
   repoRoot: string;

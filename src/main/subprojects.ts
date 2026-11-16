@@ -1,5 +1,5 @@
-import { existsSync, readdirSync, type Dirent } from 'node:fs';
-import { realpath, stat } from 'node:fs/promises';
+import { existsSync } from 'node:fs';
+import { readdir, realpath, stat } from 'node:fs/promises';
 import { join, sep } from 'node:path';
 import { runGit } from './git';
 import { HIRE_LIMITS, isSafeRelPath } from '../shared/hire';
@@ -8,7 +8,8 @@ export interface Subproject { path: string; label: string; group: string; kinds:
 export interface DetectOptions {
   maxDepth?: number;
   max?: number;
-  isIgnored?: (rel: string) => Promise<boolean>;
+  /** Which of `rels` are git-ignored (one call per batch). */
+  ignored?: (rels: string[]) => Promise<Set<string>>;
 }
 
 const MANIFESTS: Array<[string, string]> = [
@@ -24,27 +25,34 @@ function skippedName(name: string): boolean {
   return name.startsWith('.') || SKIPPED_NAMES.has(name);
 }
 
-function readDirs(abs: string): string[] {
-  let entries: Dirent[];
-  try { entries = readdirSync(abs, { withFileTypes: true }); } catch { return []; }
-  // Dirent.isDirectory() is false for symlinks: they are never followed.
-  return entries.filter(e => e.isDirectory() && !skippedName(e.name)).map(e => e.name).sort();
-}
+interface Listing { dirs: string[]; kinds: string[] }
 
-function manifestKinds(abs: string): string[] {
+/** One readdir per folder: its descendable sub-folders and its manifest kinds. */
+async function list(abs: string): Promise<Listing> {
+  let entries;
+  try { entries = await readdir(abs, { withFileTypes: true }); } catch { return { dirs: [], kinds: [] }; }
+  // Dirent.isDirectory() is false for symlinks: they are never followed.
+  const dirs = entries.filter(e => e.isDirectory() && !skippedName(e.name)).map(e => e.name).sort();
+  const files = new Set(entries.filter(e => !e.isDirectory()).map(e => e.name));
   const kinds: string[] = [];
   for (const [file, kind] of MANIFESTS) {
-    if (!kinds.includes(kind) && existsSync(join(abs, file))) kinds.push(kind);
+    if (!kinds.includes(kind) && files.has(file)) kinds.push(kind);
   }
-  return kinds;
+  return { dirs, kinds };
 }
 
 export function rootHasManifest(repoRoot: string): boolean {
   return MANIFESTS.some(([file]) => existsSync(join(repoRoot, file)));
 }
 
-async function gitIgnored(repoRoot: string, rel: string): Promise<boolean> {
-  return (await runGit(repoRoot, ['check-ignore', '-q', '--', rel])).ok;
+/** `git check-ignore` on a batch of paths (exit 1 = none ignored; any failure = none). */
+async function gitIgnored(repoRoot: string, rels: string[]): Promise<Set<string>> {
+  const out = new Set<string>();
+  for (let i = 0; i < rels.length; i += 200) {
+    const r = await runGit(repoRoot, ['check-ignore', '-z', '--', ...rels.slice(i, i + 200)]);
+    if (r.ok) for (const p of r.stdout.split('\0')) if (p) out.add(p);
+  }
+  return out;
 }
 
 const parentOf = (rel: string): string => (rel.includes('/') ? rel.slice(0, rel.lastIndexOf('/')) : '');
@@ -57,23 +65,31 @@ export async function detectSubprojects(
 ): Promise<{ items: Subproject[]; truncated: boolean }> {
   const maxDepth = opts.maxDepth ?? 4;
   const max = opts.max ?? 300;
-  const isIgnored = opts.isIgnored ?? ((rel: string) => gitIgnored(repoRoot, rel));
+  const ignored = opts.ignored ?? ((rels: string[]) => gitIgnored(repoRoot, rels));
+  const listings = new Map<string, Listing>();
+  const listOf = async (rel: string): Promise<Listing> => {
+    let l = listings.get(rel);
+    if (!l) { l = await list(join(repoRoot, rel)); listings.set(rel, l); }
+    return l;
+  };
 
   const found = new Map<string, Subproject>();
   let truncated = false;
   let level: string[] = [''];
   for (let depth = 1; depth <= maxDepth && level.length > 0 && !truncated; depth++) {
+    const parents = await Promise.all(level.map(listOf));
+    const children = level.flatMap((parent, i) =>
+      parents[i].dirs.map(name => ({ parent, name, rel: parent ? `${parent}/${name}` : name })));
+    const kids = await Promise.all(children.map(c => listOf(c.rel)));
+    const withManifest = children.filter((_, i) => kids[i].kinds.length > 0).map(c => c.rel);
+    const skip = withManifest.length ? await ignored(withManifest) : new Set<string>();
     const next: string[] = [];
-    for (const parent of level) {
-      for (const name of readDirs(join(repoRoot, parent))) {
-        const rel = parent ? `${parent}/${name}` : name;
-        const kinds = manifestKinds(join(repoRoot, rel));
-        if (kinds.length === 0) { next.push(rel); continue; }
-        if (await isIgnored(rel)) continue;
-        if (found.size >= max) { truncated = true; break; }
-        found.set(rel, { path: rel, label: name, group: parent, kinds });
-      }
-      if (truncated) break;
+    for (const [i, c] of children.entries()) {
+      const kinds = kids[i].kinds;
+      if (kinds.length === 0) { next.push(c.rel); continue; }
+      if (skip.has(c.rel)) continue;
+      if (found.size >= max) { truncated = true; break; }
+      found.set(c.rel, { path: c.rel, label: c.name, group: c.parent, kinds });
     }
     level = next;
   }
@@ -84,13 +100,16 @@ export async function detectSubprojects(
   for (const sp of found.values()) {
     for (let g = sp.group; g; g = parentOf(g)) groups.add(g);
   }
+  const siblings: Array<{ group: string; name: string; rel: string }> = [];
   for (const group of groups) {
-    for (const name of readDirs(join(repoRoot, group))) {
+    for (const name of (await listOf(group)).dirs) {
       const rel = `${group}/${name}`;
-      if (found.has(rel) || groups.has(rel)) continue;
-      if (await isIgnored(rel)) continue;
-      found.set(rel, { path: rel, label: name, group, kinds: [] });
+      if (!found.has(rel) && !groups.has(rel)) siblings.push({ group, name, rel });
     }
+  }
+  const skipSib = siblings.length ? await ignored(siblings.map(s => s.rel)) : new Set<string>();
+  for (const s of siblings) {
+    if (!skipSib.has(s.rel)) found.set(s.rel, { path: s.rel, label: s.name, group: s.group, kinds: [] });
   }
 
   let items = [...found.values()].sort((a, b) =>

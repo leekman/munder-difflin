@@ -16,14 +16,14 @@ function tree(files) {
   }
   return root;
 }
-const noIgnore = async () => false;
+const noIgnore = async () => new Set();
 
 test('detects manifest dirs and keeps the shallowest', async () => {
   const root = tree([
     'packages/services/live/composer.json', 'packages/services/core/package.json',
     'packages/ax/package.json', 'packages/ax/tooling/package.json'
   ]);
-  const { items, truncated } = await detectSubprojects(root, { isIgnored: noIgnore });
+  const { items, truncated } = await detectSubprojects(root, { ignored: noIgnore });
   assert.deepEqual(items.map(i => i.path), ['packages/ax', 'packages/services/core', 'packages/services/live']);
   assert.equal(truncated, false);
   const live = items.find(i => i.label === 'live');
@@ -36,7 +36,7 @@ test('fallback lists manifest-less siblings inside a group', async () => {
     'packages/services/live/composer.json', 'packages/services/live/poc/',
     'packages/services/core/package.json', 'packages/services/ai-kev/README.md'
   ]);
-  const { items } = await detectSubprojects(root, { isIgnored: noIgnore });
+  const { items } = await detectSubprojects(root, { ignored: noIgnore });
   const paths = items.map(i => i.path);
   assert.ok(paths.includes('packages/services/ai-kev'));
   assert.deepEqual(items.find(i => i.label === 'ai-kev').kinds, []);
@@ -46,16 +46,16 @@ test('fallback lists manifest-less siblings inside a group', async () => {
 
 test('ignores hidden, node_modules, vendor and isIgnored', async () => {
   const root = tree(['node_modules/x/package.json', '.cache/y/package.json', 'vendor/v/package.json', 'tmp/z/package.json']);
-  const { items } = await detectSubprojects(root, { isIgnored: async rel => rel === 'tmp/z' || rel === 'tmp' });
+  const { items } = await detectSubprojects(root, { ignored: async rels => new Set(rels.filter(rel => rel === 'tmp/z' || rel === 'tmp')) });
   assert.deepEqual(items, []);
 });
 
 test('respects maxDepth and max', async () => {
   const root = tree(['a/package.json', 'b/package.json', 'c/package.json', 'd/e/f/g/h/package.json']);
-  const r = await detectSubprojects(root, { max: 2, isIgnored: noIgnore });
+  const r = await detectSubprojects(root, { max: 2, ignored: noIgnore });
   assert.equal(r.items.length, 2);
   assert.equal(r.truncated, true);
-  const deep = await detectSubprojects(root, { maxDepth: 4, isIgnored: noIgnore });
+  const deep = await detectSubprojects(root, { maxDepth: 4, ignored: noIgnore });
   assert.ok(!deep.items.some(i => i.path.startsWith('d/')));
 });
 

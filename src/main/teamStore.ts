@@ -17,7 +17,7 @@ import { existsSync, mkdirSync, readFileSync, readdirSync, renameSync, rmSync, w
 import { join } from 'node:path';
 import { isSafeRelPath } from '../shared/hire';
 import { repoSlug } from './roster';
-import { MAX_SCOPE, TEAM_ID_RE } from '../shared/scopeLimits';
+import { MAX_SCOPE, MAX_TEAM_SUMMARY, TEAM_ID_RE } from '../shared/scopeLimits';
 
 /** `teamId` = the remembered team the floor's current team came from (resumed or composed). */
 export interface FloorScope { enabled: boolean; scope: string[]; teamId?: string }
@@ -29,8 +29,6 @@ export interface SavedTeam {
 }
 
 const MAX_AGENTS = 50;
-const MAX_SUMMARY = 300;
-const ID_RE = TEAM_ID_RE;
 
 /** Validated, de-duplicated, sorted copy of a scope. Throws on an unsafe path. */
 function cleanScope(scope: unknown): string[] {
@@ -42,7 +40,7 @@ function cleanScope(scope: unknown): string[] {
 }
 
 function checkId(id: unknown): string {
-  if (typeof id !== 'string' || !ID_RE.test(id)) throw new Error('invalid team id');
+  if (typeof id !== 'string' || !TEAM_ID_RE.test(id)) throw new Error('invalid team id');
   return id;
 }
 
@@ -70,7 +68,7 @@ export function readFloorScope(home: string, repoRoot: string): FloorScope | nul
     if (!v || typeof v.enabled !== 'boolean' || !Array.isArray(v.scope)) return null;
     const out: FloorScope = { enabled: v.enabled, scope: cleanScope(v.scope) };
     // A hand-edited or corrupted id is dropped, not trusted.
-    if (typeof v.teamId === 'string' && ID_RE.test(v.teamId)) out.teamId = v.teamId;
+    if (typeof v.teamId === 'string' && TEAM_ID_RE.test(v.teamId)) out.teamId = v.teamId;
     return out;
   } catch {
     return null;
@@ -91,8 +89,8 @@ function teamFiles(dir: string): Array<{ name: string; id: string }> {
   try { names = readdirSync(dir); } catch { return []; }
   const out: Array<{ name: string; id: string }> = [];
   for (const name of names) {
-    const m = /^[0-9TZ]+-([A-Za-z0-9-]{1,64})\.json$/.exec(name);
-    if (m) out.push({ name, id: m[1] });
+    const m = /^[0-9TZ]+-(.+)\.json$/.exec(name);
+    if (m && TEAM_ID_RE.test(m[1])) out.push({ name, id: m[1] });
   }
   return out;
 }
@@ -131,7 +129,7 @@ export function saveTeam(
   const scope = cleanScope(t?.scope);
   if (!Array.isArray(t.agents) || t.agents.length > MAX_AGENTS) throw new Error('invalid agents');
   if (!t.queues || typeof t.queues !== 'object' || Array.isArray(t.queues)) throw new Error('invalid queues');
-  const summary = (typeof t.summary === 'string' ? t.summary : '').trim().slice(0, MAX_SUMMARY);
+  const summary = (typeof t.summary === 'string' ? t.summary : '').trim().slice(0, MAX_TEAM_SUMMARY);
   if (t.agents.length === 0 && !summary) throw new Error('empty team');
   const id = t.id === undefined ? randomUUID() : checkId(t.id);
 

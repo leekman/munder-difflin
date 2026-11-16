@@ -887,11 +887,9 @@ export const useStore = create<State>((set, get) => ({
       return { agents, archivedAgents, feeds, selectedId, messageQueues, fullscreenAgentId };
     }),
   parkAgents: (ids) => {
-    let result: { parked: PersistedAgent[]; queues: Record<string, unknown[]> } = { parked: [], queues: {} };
-    set((s) => {
-      const r = parkEntries(s.agents, s.messageQueues, ids);
-      result = { parked: r.parked, queues: r.queues };
-      if (!r.parked.length) return s;
+    const s = get();
+    const r = parkEntries(s.agents, s.messageQueues, ids);
+    if (r.parked.length) set((s) => {
       const gone = new Set(r.parked.map((a) => a.id));
       const feeds = Object.fromEntries(Object.entries(s.feeds).filter(([id]) => !gone.has(id)));
       const messageQueues = r.remainingQueues as Record<string, QueuedMessage[]>;
@@ -901,7 +899,7 @@ export const useStore = create<State>((set, get) => ({
       persistQueues(messageQueues);
       return { agents: r.remaining, feeds, selectedId, messageQueues, fullscreenAgentId };
     });
-    return result;
+    return { parked: r.parked, queues: r.queues };
   },
   removeArchivedAgent: (id) =>
     set((s) => {

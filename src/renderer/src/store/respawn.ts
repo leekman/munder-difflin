@@ -15,8 +15,7 @@ function joinPath(root: string, sub: string): string {
  *  plutôt que de retomber sur la racine. Worktree mort → `a.cwd` + note. */
 export function restoreCwd(
   a: { cwd: string; worktreePath?: string; workdir?: string },
-  worktreeAlive: boolean,
-  _floorRepo: string | null
+  worktreeAlive: boolean
 ): { cwd: string; note?: RestoreNote } {
   if (!a.worktreePath) return { cwd: a.cwd };
   if (!worktreeAlive) return { cwd: a.cwd, note: 'worktree-gone' };
@@ -66,7 +65,7 @@ export async function resolveRestoreCwd(
       return { cwd: a.cwd, note: undefined, worktreeAlive, subGone: false };
     }
   }
-  const picked = restoreCwd(a, worktreeAlive, floorRepo);
+  const picked = restoreCwd(a, worktreeAlive);
   let cwd = picked.cwd;
   let note: RestoreNote | undefined = picked.note;
   let subGone = false;
