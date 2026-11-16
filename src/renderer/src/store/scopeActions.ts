@@ -31,6 +31,11 @@ export async function loadFloorScope(): Promise<void> {
   }
 }
 
+function notParkedNotice(names: string[]): string {
+  const n = names.length;
+  return `${n} agent${n > 1 ? "s n'ont" : " n'a"} pas pu être mis de côté : ${names.join(', ')}`;
+}
+
 export type ApplyResult = { ok: true } | { ok: false; error: string; stale?: true };
 
 /** Apply a new scope. Only the `enabled` flag changed → just store it; otherwise
@@ -64,6 +69,7 @@ export async function applyFloorScope(to: FloorScope, confirmedIds: readonly str
   }, from, to, summary, confirmedIds);
   const next = useStore.getState();
   if (!res.ok) {
+    if (res.notParked?.length) next.setScopeNotice(notParkedNotice(res.notParked));
     if (res.known) {
       // Parked but the scope was not written: the floor stays on `from`, and the
       // team just saved there is offered again.
@@ -76,10 +82,7 @@ export async function applyFloorScope(to: FloorScope, confirmedIds: readonly str
   next.setFloorScope({ enabled: to.enabled, scope: [...to.scope].sort() });
   next.setCurrentTeamId(null);
   next.setKnownTeams(res.known);
-  if (res.notParked.length) {
-    const n = res.notParked.length;
-    next.setScopeNotice(`${n} agent${n > 1 ? "s n'ont" : " n'a"} pas pu être mis de côté : ${res.notParked.join(', ')}`);
-  }
+  if (res.notParked.length) next.setScopeNotice(notParkedNotice(res.notParked));
   if (res.known.length === 0 && to.enabled) next.setComposeTeamOpen(true);
   return { ok: true };
 }
@@ -139,10 +142,12 @@ async function resumeTeamNow(team: SavedTeam, config: HarnessConfig | null): Pro
     void st.setCurrentTeam(team.id);
     try {
       await window.cth.teamsTouch(team.scope, team.id);
-      // The queues are back in the store: drop them from the file so a later
-      // resume can never deliver them a second time.
-      if (Object.keys(team.queues ?? {}).length > 0) {
-        await window.cth.teamsSave({ id: team.id, scope: team.scope, summary: team.summary, agents: team.agents, queues: {} });
+      // Queues given back to the store leave the file so a later resume can
+      // never deliver them twice; agents that failed to respawn keep theirs.
+      const onFloor = new Set(useStore.getState().agents.map((x) => x.id));
+      const kept = Object.fromEntries(Object.entries(team.queues ?? {}).filter(([id]) => !back.has(id) && !onFloor.has(id)));
+      if (Object.keys(kept).length !== Object.keys(team.queues ?? {}).length) {
+        await window.cth.teamsSave({ id: team.id, scope: team.scope, summary: team.summary, agents: team.agents, queues: kept });
       }
     } catch (e) {
       console.warn('[scope] could not update the resumed team', e);

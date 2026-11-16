@@ -101,7 +101,7 @@ export type SwitchResult =
   /** `stale`: the team changed since the confirmation, nothing was done.
    *  `known`: agents were parked but the scope was not written — the teams of
    *  the OLD scope (the just-saved one included) to offer. */
-  | { ok: false; error: string; stale?: true; known?: SavedTeam[] };
+  | { ok: false; error: string; stale?: true; known?: SavedTeam[]; notParked?: string[] };
 
 /**
  * Switch the floor to `to`, parking exactly `confirmedIds` (the team the user
@@ -164,11 +164,14 @@ export async function switchScope<A extends FloorAgent>(
   const parked = toPark.filter((a) => !failed.has(a.id));
   if (failed.size > 0 && savedId) {
     try {
-      if (parked.length > 0 || deps.currentTeamId) {
+      if (parked.length > 0) {
         await deps.teamsSave({ id: savedId, scope: fromScope, summary, agents: deps.slim(parked), queues: queuesOf(parked) });
-      } else {
+      } else if (!deps.currentTeamId) {
+        // Nobody left: a team created by this switch would be empty history.
         await deps.teamsForget(fromScope, savedId);
       }
+      // Nobody left and a pre-existing team: leave it as saved (never empty);
+      // resume treats agents already on the floor as present.
     } catch { /* resume skips an agent already on the floor */ }
   }
 
@@ -181,7 +184,7 @@ export async function switchScope<A extends FloorAgent>(
     const set = await deps.scopeSet({ enabled: to.enabled, scope: [...to.scope].sort() });
     if (!set.ok) {
       const known = await deps.teamsList(fromScope).catch(() => [] as SavedTeam[]);
-      return { ok: false, error: set.error ?? 'scope not saved', known };
+      return { ok: false, error: set.error ?? 'scope not saved', known, notParked };
     }
     return { ok: true, known: await deps.teamsList([...to.scope].sort()), notParked };
   } catch (e) {

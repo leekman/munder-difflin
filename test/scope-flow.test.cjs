@@ -155,7 +155,7 @@ test('switchScope: scopeSet failure after parking offers the just-saved team', a
     teamsList: async (scope) => { listed.push(scope); return [{ id: 'T1' }]; }
   });
   const r = await switchScope(deps, FROM, TO, '', ALL);
-  assert.deepEqual(r, { ok: false, error: 'bad scope', known: [{ id: 'T1' }] });
+  assert.deepEqual(r, { ok: false, error: 'bad scope', known: [{ id: 'T1' }], notParked: [] });
   assert.deepEqual(listed, [FROM.scope]);
 });
 
@@ -216,4 +216,28 @@ test('countOpenTasks counts non-done tasks assigned to the given agents', () => 
   assert.equal(countOpenTasks(raw, ['jim', 'pam']), 3);
   assert.equal(countOpenTasks(null, ['jim']), 0);
   assert.equal(countOpenTasks({ tasks: 'nope' }, ['jim']), 0);
+});
+
+test('switchScope: scopeSet failure after a partial park still reports notParked', async () => {
+  const { deps } = fakeDeps({
+    parkPty: async (id) => (id === 'pty-pam' ? { ok: false } : { ok: true }),
+    scopeSet: async () => ({ ok: false, error: 'bad scope' })
+  });
+  const r = await switchScope(deps, FROM, TO, '', ALL);
+  assert.equal(r.ok, false);
+  assert.deepEqual(r.notParked, ['pam']);
+});
+
+test('switchScope: nobody parked leaves a pre-existing current team untouched', async () => {
+  const saves = [];
+  const { deps, calls } = fakeDeps({
+    agents: [agent('jim', { ptyId: 'pty-jim' })],
+    currentTeamId: 'T0',
+    parkPty: async (id) => { calls.push(`parkPty:${id}`); return { ok: false }; },
+    teamsSave: async (t) => { calls.push('teamsSave'); saves.push(t); return { ok: true, team: { id: 'T0' } }; }
+  });
+  const r = await switchScope(deps, FROM, TO, '', ['jim']);
+  assert.deepEqual(r.notParked, ['jim']);
+  assert.deepEqual(calls, ['teamsSave', 'parkPty:pty-jim', 'parkAgents:', 'scopeSet', 'teamsList']);
+  assert.equal(saves.length, 1);
 });

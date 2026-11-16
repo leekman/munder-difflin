@@ -64,18 +64,23 @@ export function ScopePanel({ onClose }: { onClose: () => void }) {
     if (r.ok) { onClose(); return; }
     setConfirm(null);
     if (r.stale) {
-      // The floor changed under the confirmation: show the new team and ask again.
-      await apply();
+      // The floor changed under the confirmation: show the new team, never auto-run.
+      const plan = planScopeSwitch(useStore.getState().agents);
+      if (plan.needsConfirm) void askConfirm(plan);
       setError("L'équipe a changé : vérifie la liste avant de confirmer.");
     } else {
       setError(r.error);
     }
   };
 
-  const apply = async () => {
+  const apply = () => {
     const plan = planScopeSwitch(useStore.getState().agents);
+    if (sameScope(target.scope, current.scope) || !plan.needsConfirm) { void run(plan.toPark.map((a) => a.id)); return; }
+    void askConfirm(plan);
+  };
+
+  const askConfirm = async (plan: ReturnType<typeof planScopeSwitch>) => {
     const ids = plan.toPark.map((a) => a.id);
-    if (sameScope(target.scope, current.scope) || !plan.needsConfirm) { void run(ids); return; }
     const busyIds = new Set(plan.busy.map((a) => a.id));
     const names = [...plan.busy, ...plan.toPark.filter((a) => !busyIds.has(a.id))]
       .map((a) => ({ name: a.name, busy: busyIds.has(a.id) }));
@@ -168,7 +173,7 @@ export function ScopePanel({ onClose }: { onClose: () => void }) {
                   {busy ? 'Mise de côté…' : 'Mettre de côté et appliquer'}
                 </PixelButton>
               ) : (
-                <PixelButton variant="primary" size="md" disabled={!changed || busy || tooMany} onClick={() => void apply()}>
+                <PixelButton variant="primary" size="md" disabled={!changed || busy || tooMany} onClick={apply}>
                   {busy ? 'Application…' : 'Appliquer'}
                 </PixelButton>
               )}
