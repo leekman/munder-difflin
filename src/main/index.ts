@@ -18,6 +18,7 @@ import {
   modelForRole, OPS_STANDUP_MISSION, HEARTBEAT_MISSION, COMPACT_MAINTENANCE_MISSION, type HarnessConfig, type ScheduledMission
 } from './config';
 import { listDir, readFileText, readFileBinary, writeFileText, statAbs, expandTilde } from './fs';
+import { teardownPlan } from './ptyTeardown';
 import { normalizeWeekly, weeklyDelayMs } from '../shared/weeklySchedule';
 import {
   getBranch, runGit, getStatus, getLog, getBranches, getAheadBehind, isRepo, getDiff, mainRepoRoot,
@@ -497,7 +498,8 @@ function teardownPty(id: string, opts: { keepWorktree?: boolean } = {}): void {
   }
   // 2) Remove the isolated worktree, if any. Non-blocking; errors are logged.
   const wtPath = worktreePaths.get(id);
-  if (wtPath && opts.keepWorktree) {
+  const plan = teardownPlan({ hasWorktree: !!wtPath, isWorker: wasWorker, keepWorktree: !!opts.keepWorktree });
+  if (wtPath && plan.worktree === 'keep') {
     // Mise de côté : le worktree et ses liens de dépendances restent sur le
     // disque pour une reprise ; on oublie seulement le suivi en mémoire. Les
     // entrées étant effacées, un second appel (onExit) ne trouve rien à retirer.
@@ -515,7 +517,7 @@ function teardownPty(id: string, opts: { keepWorktree?: boolean } = {}): void {
     // teardown routes — a worker that finished (controller kill), crashed, or was
     // idle-reaped all land here. Normal agents keep the immediate force-remove.
     const worker = liveWorkers.get(id);
-    if (worker) {
+    if (plan.worktree === 'gated' && worker) {
       liveWorkers.delete(id);
       void finalizeWorkerWorktree(wtPath, origCwd, worker, subdir);
     } else {
@@ -531,7 +533,7 @@ function teardownPty(id: string, opts: { keepWorktree?: boolean } = {}): void {
   // the renderer's archiveAgent is a no-op if the card is already gone). NOT
   // done for regular agents: their kill flows already manage their own card.
   // Pas en mise de côté : le renderer archiverait l'agent et perdrait sa file.
-  if (wasWorker && !opts.keepWorktree) {
+  if (plan.archiveCard) {
     try { liveWebContents()?.send('hive:agentArchived', { id }); } catch { /* window torn down */ }
   }
   syncKeepAwake();
