@@ -84,6 +84,9 @@ export interface HireManifest {
    *  pre-filled; write/secret ids are surfaced for human consent at import
    *  and never auto-enabled. */
   mcpServers?: string[];
+  /** Optional working sub-directory, relative to the repo root (monorepo
+   *  sub-project). Normalised: no leading `./`, no trailing `/`. */
+  workdir?: string;
 }
 
 export interface HireValidation {
@@ -106,6 +109,7 @@ export const HIRE_LIMITS = {
   model: 80,
   author: 80,
   homepage: 300,
+  workdir: 200,
   capabilities: 12,
   capabilityChars: 40,
   commandFlags: 16,
@@ -173,6 +177,23 @@ function isSafeFlag(token: string): boolean {
   if (!token.startsWith('-')) return false;
   const name = token.split('=', 1)[0].toLowerCase();
   return SAFE_FLAG_NAMES.has(name);
+}
+
+/** Normalise a relative path: drop empty and `.` segments (so `./a/` -> `a`).
+ *  Returns null when nothing is left. Does not judge safety. */
+function normalizeRelPath(p: string): string | null {
+  const segs = p.split('/').filter((s) => s !== '' && s !== '.');
+  return segs.length > 0 ? segs.join('/') : null;
+}
+
+/** True when `p` is a safe repo-relative path: no `\\`, no `:`, no leading `/`,
+ *  no `..` segment, and non-empty. Answers on the raw string after the same
+ *  normalisation the manifest value gets (`./a` and `a/` are both fine). Pure. */
+export function isSafeRelPath(p: string): boolean {
+  if (typeof p !== 'string') return false;
+  if (p.includes('\\') || p.includes(':') || p.startsWith('/')) return false;
+  const n = normalizeRelPath(p);
+  return n !== null && !n.split('/').includes('..');
 }
 
 function str(v: unknown): v is string { return typeof v === 'string'; }
@@ -335,6 +356,18 @@ export function validateHireManifest(raw: unknown): HireValidation {
     }
   }
 
+  // workdir — optional repo-relative sub-directory, normalised
+  let workdir: string | undefined;
+  if (o.workdir !== undefined) {
+    if (!str(o.workdir)) errors.push('"workdir" must be a string');
+    else {
+      const w = o.workdir.trim();
+      if (w.length > HIRE_LIMITS.workdir) errors.push(`"workdir" exceeds ${HIRE_LIMITS.workdir} chars`);
+      else if (!isSafeRelPath(w)) errors.push('"workdir" must be a non-empty relative path with no "..", no ":", no backslash and no leading "/"');
+      else workdir = normalizeRelPath(w) ?? undefined;
+    }
+  }
+
   if (homepage && !homepage.startsWith('https://')) errors.push('"homepage" must be https');
 
   if (errors.length > 0 || !name) return { ok: false, errors };
@@ -342,7 +375,7 @@ export function validateHireManifest(raw: unknown): HireValidation {
     ok: true,
     errors: [],
     consentRequired: consentRequired.length > 0 ? consentRequired : undefined,
-    manifest: { spec: HIRE_SPEC_V1, name, description, goal, character, accent, provider, model, effort, commandFlags, capabilities, isolate, tokenCap, author, homepage, skills, mcpServers }
+    manifest: { spec: HIRE_SPEC_V1, name, description, goal, character, accent, provider, model, effort, commandFlags, capabilities, isolate, tokenCap, author, homepage, skills, mcpServers, workdir }
   };
 }
 

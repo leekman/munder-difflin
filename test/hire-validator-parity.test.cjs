@@ -104,6 +104,26 @@ const parityCases = [
     expected: false
   },
   {
+    name: 'accepts a relative workdir',
+    raw: manifest({ workdir: 'packages/services/live.global-exam.com' }),
+    expected: true
+  },
+  {
+    name: 'accepts a ./ prefixed workdir with trailing slash',
+    raw: manifest({ workdir: './a/b/' }),
+    expected: true
+  },
+  {
+    name: 'rejects a parent-escaping workdir',
+    raw: manifest({ workdir: 'a/../../b' }),
+    expected: false
+  },
+  {
+    name: 'rejects an absolute workdir',
+    raw: manifest({ workdir: '/abs' }),
+    expected: false
+  },
+  {
     name: 'rejects a non-string MCP catalog id',
     raw: manifest({ mcpServers: ['fetch', null] }),
     expected: false
@@ -175,6 +195,18 @@ test('runtime and gallery validators agree across every manifest field boundary'
     { description: 'd'.repeat(201) },
     { goal: 'g'.repeat(4000) },
     { goal: 'g'.repeat(4001) },
+    { workdir: 'a/b' },
+    { workdir: './a/' },
+    { workdir: '../x' },
+    { workdir: 'a/../../b' },
+    { workdir: '/abs' },
+    { workdir: 'C:\\x' },
+    { workdir: 'a\\b' },
+    { workdir: '' },
+    { workdir: '.' },
+    { workdir: 'w'.repeat(200) },
+    { workdir: 'w'.repeat(201) },
+    { workdir: 42 },
     { character: 'c'.repeat(25) },
     { accent: false },
     { model: 'Gemini 3.1 Pro (High)' },

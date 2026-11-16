@@ -128,6 +128,17 @@ window.HireSpec = (function () {
     if (raw.tokenCap !== undefined && !(Number.isInteger(raw.tokenCap) && raw.tokenCap > 0 && raw.tokenCap <= 1e10)) {
       errors.push('"tokenCap" must be a positive integer (max 1e10)');
     }
+    if (raw.workdir !== undefined) {
+      if (!str(raw.workdir)) errors.push('"workdir" must be a string');
+      else {
+        const w = raw.workdir.trim();
+        const norm = w.split('/').filter((s) => s !== '' && s !== '.');
+        if (w.length > 200) errors.push('"workdir" exceeds 200 chars');
+        else if (w.indexOf('\\') !== -1 || w.indexOf(':') !== -1 || w.charAt(0) === '/' || norm.length === 0 || norm.indexOf('..') !== -1) {
+          errors.push('"workdir" must be a non-empty relative path with no "..", no ":", no backslash and no leading "/"');
+        }
+      }
+    }
     if (str(raw.homepage) && raw.homepage.trim() && !raw.homepage.trim().startsWith('https://')) errors.push('"homepage" must be https');
     return { ok: errors.length === 0, errors };
   }

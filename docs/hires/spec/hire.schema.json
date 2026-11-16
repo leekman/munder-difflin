@@ -68,6 +68,12 @@
       "type": "boolean",
       "description": "Spawn the agent in its own isolated git worktree."
     },
+    "workdir": {
+      "type": "string",
+      "minLength": 1,
+      "maxLength": 200,
+      "description": "Optional working sub-directory relative to the repo root (monorepo sub-project). No '..', no absolute path."
+    },
     "tokenCap": {
       "type": "integer",
       "minimum": 1,

@@ -8,6 +8,7 @@ const { join } = require('node:path');
 const loadTs = require('./load-ts.cjs');
 
 const { readHireManifestFiles } = loadTs('src/main/hire.ts');
+const { validateHireManifest, isSafeRelPath, HIRE_LIMITS } = loadTs('src/shared/hire.ts');
 
 const manifest = (name) => ({ spec: 'munder-difflin/hire@1', name });
 
@@ -107,4 +108,30 @@ test('Command Center sets and clears one cap through the atomic IPC', () => {
   assert.ok(start >= 0 && end > start, 'Command Center cap handler is present');
   assert.match(capFlow, /window\.cth\.setAgentTokenCap\(id, tokens\)/);
   assert.doesNotMatch(capFlow, /updateConfig\(\{\s*agentTokenCaps/);
+});
+
+test('workdir: a relative sub-path is accepted and kept', () => {
+  const r = validateHireManifest({ ...manifest('Jim'), workdir: 'packages/services/live.global-exam.com' });
+  assert.equal(r.ok, true, r.errors.join('; '));
+  assert.equal(r.manifest.workdir, 'packages/services/live.global-exam.com');
+  assert.equal(HIRE_LIMITS.workdir, 200);
+});
+
+test('workdir: normalises a leading ./ and a trailing slash', () => {
+  assert.equal(validateHireManifest({ ...manifest('Jim'), workdir: './a' }).manifest.workdir, 'a');
+  assert.equal(validateHireManifest({ ...manifest('Jim'), workdir: 'a/b/' }).manifest.workdir, 'a/b');
+});
+
+test('workdir: unsafe or malformed values are rejected with a "workdir" error', () => {
+  const bad = ['../x', 'a/../../b', '/abs', 'C:\\x', 'a\\b', '', '.', './', 'x'.repeat(201), 42, null, ['a']];
+  for (const workdir of bad) {
+    const r = validateHireManifest({ ...manifest('Jim'), workdir });
+    assert.equal(r.ok, false, `should reject ${JSON.stringify(workdir)}`);
+    assert.ok(r.errors.some((e) => e.includes('workdir')), `error mentions workdir for ${JSON.stringify(workdir)}: ${r.errors.join('; ')}`);
+  }
+});
+
+test('isSafeRelPath answers on the raw string after normalisation', () => {
+  for (const ok of ['a', 'a/b', './a', 'a/b/', 'a.b/c-d']) assert.equal(isSafeRelPath(ok), true, ok);
+  for (const ko of ['', '.', '..', '../x', 'a/../b', '/abs', 'C:\\x', 'a\\b', 'a:b']) assert.equal(isSafeRelPath(ko), false, ko);
 });

@@ -71,6 +71,7 @@ function pushModelAndSpec(lines: string[], input: { defaultModel?: string; model
     `- "commandFlags": ≤ ${L.commandFlags} éléments ; seuls ces flags sont autorisés : ${[...SAFE_FLAG_NAMES].join(', ')} (une valeur peut suivre un flag)`,
     `- "capabilities": ≤ ${L.capabilities} étiquettes de ≤ ${L.capabilityChars} caractères`,
     '- "isolate": booléen (travailler dans un worktree git isolé)',
+    `- "workdir": optionnel, ≤ ${L.workdir} caractères, chemin relatif à la racine du repo (sous-projet d'un monorepo), sans ".." ni chemin absolu`,
     '- "tokenCap": entier positif (plafond de tokens)',
     `- "skills": ≤ ${L.skills} ids parmi : ${[...BUNDLED_SKILL_IDS].join(', ')}`,
     `- "mcpServers": ≤ ${L.mcpServers} ids parmi : ${MCP_CATALOG.map(e => `${e.id} (${e.tier})`).join(', ')}`,
