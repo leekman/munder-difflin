@@ -536,6 +536,8 @@ const api = {
     ipcRenderer.invoke('pty:redraw', id),
   killPty: (id: string): Promise<{ ok: boolean; error?: string }> =>
     ipcRenderer.invoke('pty:kill', id),
+  parkPty: (id: string): Promise<{ ok: boolean; error?: string }> =>
+    ipcRenderer.invoke('pty:park', id),
   listPtys: (): Promise<Array<{
     id: string;
     cwd: string;

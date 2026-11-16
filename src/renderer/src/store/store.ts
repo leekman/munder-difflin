@@ -15,6 +15,7 @@ import { DEFAULT_ORG_TRIGGER, type OrgTriggerConfig, type WebhookTrigger } from 
 import { isCompactionCommand } from '@shared/providerAutomation';
 import { preferredAgentRole } from '@shared/agentRole';
 import { isInboxNudge } from '@shared/hiveNudge';
+import { parkEntries } from './parking';
 import { refocusAfterRemoval, focusOnLoad, restoreFocus } from './focusMode';
 import { chooseRosterSource } from './rosterSource';
 
@@ -50,6 +51,8 @@ export interface Agent {
   /** legacy field — populated only for the seeded mock agents */
   tmuxTarget: string;
   cwd: string;
+  /** Sous-projet de travail, relatif au repo de l'étage (monorepo). */
+  workdir?: string;
   goal?: string;
   /** User-authored private note shown and edited from the roster-card hover. */
   note?: string;
@@ -234,6 +237,10 @@ interface State {
   /** Archive an agent (its terminal was closed): move it from the active roster
    *  into `archivedAgents` with its PTY cleared. Retained + flagged, NOT deleted. */
   archiveAgent: (id: string) => void;
+  /** Mettre des agents de côté : retirés du roster actif (et de leurs files)
+   *  SANS passer par `archivedAgents`; worktree et messages restent intacts.
+   *  Renvoie les entrées épurées + leurs files pour une reprise ultérieure. */
+  parkAgents: (ids: string[]) => { parked: PersistedAgent[]; queues: Record<string, unknown[]> };
   /** Permanently forget an archived agent (drops the renderer entry only; the
    *  hive registry keeps its record). */
   removeArchivedAgent: (id: string) => void;
@@ -338,7 +345,7 @@ const LS_FOCUS_MODE = 'cth.prefersFocusMode';
 // Fields that are large or transient — not worth persisting across reloads.
 // contextTokens/contextLimit describe a LIVE session; persisting them showed a
 // dead session's context gauge after a restart until the poll caught up.
-type PersistedAgent = Omit<Agent, 'recentAssistantText' | 'recentTextTs' | 'blockReason' | 'contextTokens' | 'contextLimit' | 'seedPrompt'>;
+export type PersistedAgent = Omit<Agent, 'recentAssistantText' | 'recentTextTs' | 'blockReason' | 'contextTokens' | 'contextLimit' | 'seedPrompt'>;
 
 // ─── The roster mirror ──────────────────────────────────────────────────────
 //
@@ -435,7 +442,7 @@ try {
   window.addEventListener('beforeunload', flushRosterNow);
 } catch { /* not a browser context (unit tests) */ }
 
-function slimAgents(agents: Agent[]): PersistedAgent[] {
+export function slimAgents(agents: Agent[]): PersistedAgent[] {
   return agents.map(({ recentAssistantText, recentTextTs, blockReason, contextTokens, contextLimit, seedPrompt, ...rest }) => {
     void recentAssistantText; void recentTextTs; void blockReason; void contextTokens; void contextLimit; void seedPrompt;
     return rest;
@@ -828,6 +835,23 @@ export const useStore = create<State>((set, get) => ({
       if (_queueGone) persistQueues(messageQueues);
       return { agents, archivedAgents, feeds, selectedId, messageQueues, fullscreenAgentId };
     }),
+  parkAgents: (ids) => {
+    let result: { parked: PersistedAgent[]; queues: Record<string, unknown[]> } = { parked: [], queues: {} };
+    set((s) => {
+      const r = parkEntries(s.agents, s.messageQueues, ids);
+      result = { parked: r.parked, queues: r.queues };
+      if (!r.parked.length) return s;
+      const gone = new Set(r.parked.map((a) => a.id));
+      const feeds = Object.fromEntries(Object.entries(s.feeds).filter(([id]) => !gone.has(id)));
+      const messageQueues = r.remainingQueues as Record<string, QueuedMessage[]>;
+      const selectedId = s.selectedId && gone.has(s.selectedId) ? (r.remaining[0]?.id ?? null) : s.selectedId;
+      const fullscreenAgentId = refocusAfterRemoval(s.fullscreenAgentId, r.remaining, selectedId);
+      persistAgents(r.remaining, selectedId);
+      persistQueues(messageQueues);
+      return { agents: r.remaining, feeds, selectedId, messageQueues, fullscreenAgentId };
+    });
+    return result;
+  },
   removeArchivedAgent: (id) =>
     set((s) => {
       if (!s.archivedAgents.some((a) => a.id === id)) return s;

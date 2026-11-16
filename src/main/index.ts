@@ -465,7 +465,7 @@ const preservedWorktrees = new Map<string, PreservedWorktree>();
  * step is wrapped so a teardown error can never crash the caller (an IPC
  * handler or node-pty's onExit).
  */
-function teardownPty(id: string): void {
+function teardownPty(id: string, opts: { keepWorktree?: boolean } = {}): void {
   // Ephemeral-worker flag, read BEFORE the cleanup below deletes the entry. All
   // worker deaths (done-release, idle/token reap, manual stop, crash) funnel
   // through here, so this is the one place their floor card gets archived
@@ -497,7 +497,15 @@ function teardownPty(id: string): void {
   }
   // 2) Remove the isolated worktree, if any. Non-blocking; errors are logged.
   const wtPath = worktreePaths.get(id);
-  if (wtPath) {
+  if (wtPath && opts.keepWorktree) {
+    // Mise de côté : le worktree et ses liens de dépendances restent sur le
+    // disque pour une reprise ; on oublie seulement le suivi en mémoire. Les
+    // entrées étant effacées, un second appel (onExit) ne trouve rien à retirer.
+    worktreePaths.delete(id);
+    worktreeOrigins.delete(id);
+    worktreeSubdirs.delete(id);
+    liveWorkers.delete(id);
+  } else if (wtPath) {
     const origCwd = worktreeOrigins.get(id) ?? wtPath;
     worktreePaths.delete(id);
     worktreeOrigins.delete(id);
@@ -3118,6 +3126,14 @@ ipcMain.handle('pty:kill', (_evt, id: string) => {
   // node-pty firing onExit once the child actually dies is a harmless no-op.
   const res = ptyManager.kill(id);
   teardownPty(id);
+  return res;
+});
+// Mettre un agent de côté : tue le process mais CONSERVE son worktree (et ses
+// node_modules liés) pour une reprise ultérieure.
+ipcMain.handle('pty:park', (_evt, id: string) => {
+  if (typeof id !== 'string') return { ok: false, error: 'invalid id' };
+  const res = ptyManager.kill(id);
+  teardownPty(id, { keepWorktree: true });
   return res;
 });
 ipcMain.handle('pty:list', () => ptyManager.list());
