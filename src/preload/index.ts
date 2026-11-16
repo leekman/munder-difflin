@@ -1266,6 +1266,11 @@ const api = {
   /** The running harness + how many OTHER floors are open (they close on a switch). */
   floorHarnessInfo: (): Promise<{ harness: string | null; otherFloors: number }> =>
     ipcRenderer.invoke('floor:harnessInfo'),
+  /** Sub-projects of this floor's monorepo (cached in main; `refresh` rescans). */
+  floorSubprojects: (refresh?: boolean): Promise<{
+    items: Array<{ path: string; label: string; group: string; kinds: string[] }>;
+    truncated: boolean; rootHasManifest: boolean;
+  }> => ipcRenderer.invoke('floor:subprojects', refresh ? { refresh: true } : undefined),
   /** Compose the team: hidden read-only analysis of the repo (main supplies the model). */
   teamAnalyze: (input: Omit<TeamPromptInput, 'defaultModel'>): Promise<TeamResponse> =>
     ipcRenderer.invoke('team:analyze', input),

@@ -24,6 +24,7 @@ import {
   addWorktree, removeWorktree, worktreeHasUnintegratedWork, worktreeIsGcSafe,
   getLogGraph, getCommitFiles, getFileAtRev, compareRefs, listWorktrees, checkoutRef
 } from './git';
+import { detectSubprojects, rootHasManifest, type Subproject } from './subprojects';
 import { resolveProjectInfo, type ProjectInfo } from './projectInfo';
 import { linkWorktreeDeps, unlinkWorktreeDeps } from './worktreeDeps';
 import { HiveManager, type AgentMeta, type HiveMessage, type HiveTask } from './hive';
@@ -3681,6 +3682,17 @@ function teamRepoOf(sender: Electron.WebContents): string | null {
 function teamInput(raw: unknown, repoRoot: string): TeamPromptInput | null {
   return sanitizeTeamInput(raw, repoRoot, readConfig().defaultModel ?? undefined);
 }
+const subprojectsCache = new Map<string, { items: Subproject[]; truncated: boolean; rootHasManifest: boolean }>();
+ipcMain.handle('floor:subprojects', async (evt, arg: unknown) => {
+  const repo = teamRepoOf(evt.sender);
+  if (!repo) return { items: [], truncated: false, rootHasManifest: true };
+  const refresh = !!arg && typeof arg === 'object' && (arg as { refresh?: unknown }).refresh === true;
+  const hit = refresh ? undefined : subprojectsCache.get(repo);
+  if (hit) return hit;
+  const res = { ...(await detectSubprojects(repo)), rootHasManifest: rootHasManifest(repo) };
+  subprojectsCache.set(repo, res);
+  return res;
+});
 ipcMain.handle('team:analyze', async (evt, raw: unknown) => {
   const repo = teamRepoOf(evt.sender);
   if (!repo) return { kind: 'error', error: 'no floor repo' };

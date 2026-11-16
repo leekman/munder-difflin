@@ -65,7 +65,7 @@ test("changeHome move copies the per-repo 'rosters' folder", () => {
 
 test('floor IPC channels are registered in main', () => {
   const source = main();
-  for (const ch of ['floor:repoSync', 'floor:chooseRepo', 'floor:listRepos', 'floor:openForRepo']) {
+  for (const ch of ['floor:repoSync', 'floor:chooseRepo', 'floor:listRepos', 'floor:openForRepo', 'floor:subprojects']) {
     assert.ok(source.includes(`'${ch}'`), `${ch} is registered`);
   }
   assert.match(source, /ipcMain\.on\('floor:repoSync'/);
@@ -73,7 +73,7 @@ test('floor IPC channels are registered in main', () => {
 
 test('preload exposes the floor API', () => {
   const source = preload();
-  for (const name of ['floorRepoSync', 'chooseFloorRepo', 'listFloorRepos', 'openFloorForRepo']) {
+  for (const name of ['floorRepoSync', 'chooseFloorRepo', 'listFloorRepos', 'openFloorForRepo', 'floorSubprojects']) {
     assert.match(source, new RegExp(`\\b${name}:`), `${name} is exposed`);
   }
   assert.match(source, /sendSync\('floor:repoSync'\)/);
