@@ -15,8 +15,10 @@ export function parkEntries(
   remainingQueues: Record<string, unknown[]>;
 } {
   const wanted = new Set(ids);
-  const picked = agents.filter((a) => wanted.has(a.id));
-  const remaining = agents.filter((a) => !wanted.has(a.id));
+  // Jamais le god ni un assistant système, même si leur id est demandé.
+  const picked = agents.filter((a) => wanted.has(a.id) && !a.isGod && !a.isAssistant);
+  const pickedIds = new Set(picked.map((a) => a.id));
+  const remaining = agents.filter((a) => !pickedIds.has(a.id));
   // Le PTY est tué : on efface tout l'état live, comme archiveAgent.
   const parked = slimAgents(
     picked.map((a) => ({
@@ -31,7 +33,7 @@ export function parkEntries(
   const parkedQueues: Record<string, unknown[]> = {};
   const remainingQueues: Record<string, unknown[]> = {};
   for (const [id, q] of Object.entries(queues)) {
-    if (picked.some((a) => a.id === id)) parkedQueues[id] = q;
+    if (pickedIds.has(id)) parkedQueues[id] = q;
     else remainingQueues[id] = q;
   }
   return { parked, queues: parkedQueues, remaining, remainingQueues };

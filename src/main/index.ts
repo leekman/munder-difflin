@@ -530,7 +530,8 @@ function teardownPty(id: string, opts: { keepWorktree?: boolean } = {}): void {
   // Archive the dead worker's floor card (mirrors killAgent's voice-kill path;
   // the renderer's archiveAgent is a no-op if the card is already gone). NOT
   // done for regular agents: their kill flows already manage their own card.
-  if (wasWorker) {
+  // Pas en mise de côté : le renderer archiverait l'agent et perdrait sa file.
+  if (wasWorker && !opts.keepWorktree) {
     try { liveWebContents()?.send('hive:agentArchived', { id }); } catch { /* window torn down */ }
   }
   syncKeepAwake();
@@ -3129,6 +3130,8 @@ ipcMain.handle('pty:kill', (_evt, id: string) => {
 });
 // Mettre un agent de côté : tue le process mais CONSERVE son worktree (et ses
 // node_modules liés) pour une reprise ultérieure.
+// N'émet pas `hive:agentArchived` : l'ordre `await parkPty(id); parkAgents([id])`
+// comme l'inverse est sûr (la file et l'entrée ne sont jamais archivées).
 ipcMain.handle('pty:park', (_evt, id: string) => {
   if (typeof id !== 'string') return { ok: false, error: 'invalid id' };
   const res = ptyManager.kill(id);

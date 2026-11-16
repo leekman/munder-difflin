@@ -45,3 +45,11 @@ test('parkEntries: un id inconnu seul ne change rien', () => {
   assert.equal(r.remaining.length, 1);
   assert.deepEqual(Object.keys(r.remainingQueues), ['a']);
 });
+
+test('parkEntries: ne met jamais de côté un god ni un assistant', () => {
+  const agents = [agent('god', { isGod: true }), agent('sys', { isAssistant: true }), agent('a')];
+  const r = parkEntries(agents, { god: [{ id: 'q' }], sys: [{ id: 'q' }] }, ['god', 'sys', 'a']);
+  assert.deepEqual(r.parked.map((p) => p.id), ['a']);
+  assert.deepEqual(r.remaining.map((x) => x.id), ['god', 'sys']);
+  assert.deepEqual(Object.keys(r.remainingQueues).sort(), ['god', 'sys']);
+});

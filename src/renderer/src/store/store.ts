@@ -239,7 +239,8 @@ interface State {
   archiveAgent: (id: string) => void;
   /** Mettre des agents de côté : retirés du roster actif (et de leurs files)
    *  SANS passer par `archivedAgents`; worktree et messages restent intacts.
-   *  Renvoie les entrées épurées + leurs files pour une reprise ultérieure. */
+   *  Renvoie les entrées épurées + leurs files pour une reprise ultérieure.
+   *  Sûr avant ou après `parkPty` : le main n'émet pas d'archivage en park. */
   parkAgents: (ids: string[]) => { parked: PersistedAgent[]; queues: Record<string, unknown[]> };
   /** Permanently forget an archived agent (drops the renderer entry only; the
    *  hive registry keeps its record). */
