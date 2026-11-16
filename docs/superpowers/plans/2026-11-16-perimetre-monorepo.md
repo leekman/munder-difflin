@@ -301,8 +301,9 @@ géré uniquement par main. Même durabilité (tmp + rename), aucune modificatio
   ```
   `SwitchDeps` = `{ agents(): Agent[]; queues(): Record<string, unknown[]>; parkPty(id): Promise<unknown>; parkAgents(ids): {parked; queues}; teamsSave; scopeSet; teamsList; currentTeamId?: string }`.
   Ordre **obligatoire** dans `switchScope` : (1) construire l'équipe à partir des entrées slim **avant** de
-  couper quoi que ce soit, (2) `teamsSave` (si l'équipe a ≥ 1 agent) — en cas d'échec retourner `{ ok:false }`
-  sans rien couper, (3) `parkPty` de chaque agent, (4) `parkAgents`, (5) `scopeSet(to)`, (6) `teamsList(to.scope)`.
+  couper quoi que ce soit, (2) `teamsSave` (si l'équipe a ≥ 1 agent, avec `id: currentTeamId` s'il existe) — en
+  cas d'échec retourner `{ ok:false }` sans rien couper ; avec 0 agent et un `currentTeamId` (équipe composée
+  mais jamais lancée), `teamsForget(currentTeamId)`, (3) `parkPty` de chaque agent, (4) `parkAgents`, (5) `scopeSet(to)`, (6) `teamsList(to.scope)`.
   Résumé de l'équipe mise de côté : celui de l'équipe courante si elle vient d'un `teamsSave` antérieur
   (`currentTeamId`), sinon `localSummary(agents)` = `N agents : <nom> — <description>` tronqué à 300.
   `export function localSummary(agents: { name: string; description?: string }[]): string`.
