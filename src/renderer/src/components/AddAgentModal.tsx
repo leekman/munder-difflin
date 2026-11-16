@@ -31,7 +31,7 @@ import {
   isClaudeProvider
 } from '@/store/config';
 import { useRtl } from '@/i18n/useDirection';
-import { existingAgentsOf, modelIdsByProvider } from './composeTeamFlow';
+import { existingAgentsOf, initialHireCwd, modelIdsByProvider, workdirOf } from './composeTeamFlow';
 
 const ACCENTS: AccentColorName[] = ['coral', 'mint', 'sky', 'lemon', 'lilac', 'peach'];
 
@@ -197,6 +197,30 @@ export function AddAgentModal({ onClose, config, onConfigChange }: AddAgentModal
   const [accent, setAccent] = useState<AccentColorName>(knownAccent(pendingHire?.accent));
   // The floor's own repo first: a hire on this floor works in this repo.
   const [cwd, setCwd] = useState<string>(floorRepo ?? config.registeredRepos[0] ?? '');
+  // On a monorepo floor: the scope's sub-projects (shortcuts when ≥ 2), and the
+  // starting folder re-seeded per hire — the hire's workdir when it exists, else
+  // the only sub-project of the scope, else the repo root.
+  const floorScope = useStore(s => s.floorScope);
+  const scopePaths = floorRepo && floorScope?.enabled ? floorScope.scope : [];
+  const cwdSeedRef = useRef(0);
+  useEffect(() => {
+    if (!floorRepo) return;
+    const repo = floorRepo;
+    const seq = ++cwdSeedRef.current;
+    const workdir = pendingHire?.workdir;
+    void (async () => {
+      let exists = false;
+      if (workdir) {
+        try {
+          const st = await window.cth.statAbs(initialHireCwd(repo, workdir, true, []));
+          exists = st.exists && !st.isFile;
+        } catch { /* treated as missing */ }
+      }
+      if (seq === cwdSeedRef.current) setCwd(initialHireCwd(repo, workdir, exists, scopePaths));
+    })();
+  // Seeded per queue head (like the other fields), not on every scope render.
+  // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [pendingHire]);
   // Local mirror of the registered projects so one added from here shows as a
   // quick-pick immediately (the `config` prop is a snapshot taken at open time).
   const [repos, setRepos] = useState<string[]>(config.registeredRepos);
@@ -524,6 +548,9 @@ export function AddAgentModal({ onClose, config, onConfigChange }: AddAgentModal
       // Crush (seedDelivery:'type-into-tui') hands its hive protocol back here
       // instead of on argv; useHive types it into the TUI after boot. (ondev-b)
       seedPrompt: spawnRes.seedPrompt,
+      // Sub-project of the floor repo the user picked (before any isolation),
+      // so a restore or a resume restarts in the same sub-folder.
+      workdir: workdirOf(floorRepo, projectCwd) ?? workdirOf(floorRepo, cwd),
       recentTextTs: Date.now()
     };
     addAgent(agent);
@@ -881,6 +908,26 @@ export function AddAgentModal({ onClose, config, onConfigChange }: AddAgentModal
                           </span>
                         </PixelButton>
                       </div>
+                      {floorRepo && scopePaths.length >= 2 && (
+                        <div style={{ display: 'flex', gap: 6, flexWrap: 'wrap', alignItems: 'center', marginTop: 6 }}>
+                          <span style={{ fontSize: 12, color: 'var(--cth-ink-500)' }}>Sous-projets du périmètre :</span>
+                          {[floorRepo, ...scopePaths.map((p) => initialHireCwd(floorRepo as string, p, true, []))].map((dir, i) => (
+                            <button
+                              key={dir}
+                              onClick={() => setCwd(dir)}
+                              title={dir}
+                              style={{
+                                padding: '3px 8px 1px', border: 'none', cursor: 'pointer',
+                                background: cwd === dir ? `var(--cth-${accent}-light)` : 'var(--cth-cream-100)',
+                                boxShadow: cwd === dir ? 'inset 0 0 0 1px var(--cth-ink-500)' : 'inset 0 0 0 1px var(--cth-ink-100)',
+                                fontFamily: 'var(--cth-font-ui)', fontSize: 12, color: 'var(--cth-ink-900)'
+                              }}
+                            >
+                              {i === 0 ? 'racine' : scopePaths[i - 1]}
+                            </button>
+                          ))}
+                        </div>
+                      )}
                       {cwd.trim() && !repos.includes(cwd.trim()) && (
                         <button
                           onClick={() => registerProject(cwd)}

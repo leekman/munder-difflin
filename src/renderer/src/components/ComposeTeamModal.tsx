@@ -10,14 +10,17 @@ import { effortFor, effortLevelsFor, type EffortLevel } from '@shared/effort';
 import { modelsForProvider } from '@/store/config';
 import type { AgentProvider } from '@shared/agentProvider';
 import {
+  analysisScope,
   cardsFromResponse,
   existingAgentsOf,
   modelIdsByProvider,
   nextStep,
   prepareWrite,
+  workdirOptions,
   type ComposeCard,
   type ComposeStep
 } from '@/components/composeTeamFlow';
+import { localSummary, type Subproject } from '@/components/scopeFlow';
 
 type Tab = 'auto' | 'manual';
 type WriteResult = { written: string[]; errors: string[]; manifests: HireManifest[] };
@@ -28,12 +31,20 @@ type WriteResult = { written: string[]; errors: string[]; manifests: HireManifes
  * prompt into any assistant and pasting its answer). The edited proposal is
  * written as hire@1 files; nothing spawns from here — "Import now" queues the
  * written manifests into AddAgentModal's review.
+ *
+ * On a monorepo floor the analysis is limited to the floor's scope (missing
+ * sub-projects dropped), each card picks its `workdir` among the scope, and the
+ * written team is remembered for that scope (summary now, agents when parked).
+ * Opened in 'scratch' mode (« Repartir de zéro »), the current agents are not
+ * shown to the analysis and a new team is always remembered.
  */
 export function ComposeTeamModal({ onClose }: { onClose: () => void }) {
   const { t } = useTranslation();
   const agents = useStore((s) => s.agents);
   const enqueuePendingHires = useStore((s) => s.enqueuePendingHires);
   const setAddAgentOpen = useStore((s) => s.setAddAgentOpen);
+  const floorScope = useStore((s) => s.floorScope);
+  const mode = useStore((s) => s.composeTeamMode);
 
   const [tab, setTab] = useState<Tab>('auto');
   const [step, setStep] = useState<ComposeStep>('idle');
@@ -46,6 +57,24 @@ export function ComposeTeamModal({ onClose }: { onClose: () => void }) {
   const [copied, setCopied] = useState(false);
   const [writing, setWriting] = useState(false);
   const [result, setResult] = useState<WriteResult | null>(null);
+  const [teamSummary, setTeamSummary] = useState<string | undefined>();
+  // Detected sub-projects (labels of the workdir picker, missing scope paths).
+  const [subprojects, setSubprojects] = useState<Subproject[]>([]);
+  // Non-blocking: the team could not be remembered (the files are written).
+  const [saveNotice, setSaveNotice] = useState('');
+
+  const scoped = !!floorScope?.enabled && floorScope.scope.length > 0;
+  const scopeCheck = analysisScope(floorScope, subprojects);
+  // The scope the cards' workdir must belong to (undefined = no constraint).
+  const cardScope = scoped && scopeCheck.ok && scopeCheck.scope.length > 0 ? scopeCheck.scope : undefined;
+  useEffect(() => {
+    if (!scoped) return;
+    let alive = true;
+    window.cth.floorSubprojects()
+      .then((r) => { if (alive) setSubprojects(r.items); })
+      .catch(() => { /* labels fall back to paths */ });
+    return () => { alive = false; };
+  }, [scoped]);
 
   const repo = floorRepo ?? '';
   // Step to return to when an analysis is cancelled (idle or questions).
@@ -59,11 +88,28 @@ export function ComposeTeamModal({ onClose }: { onClose: () => void }) {
     if (analyzingRef.current && repo) void window.cth.teamCancel(repo);
   }, [repo]);
 
-  const promptInput = (round: 1 | 2) => ({
+  /** Scope to analyse, from a fresh sub-project detection: missing paths are
+   *  dropped; a scope whose paths are all gone is refused (never widened to
+   *  the whole repo). Sets the error and returns null when refused. */
+  const resolveScope = async (): Promise<string[] | null> => {
+    if (!scoped) return [];
+    let items = subprojects;
+    try {
+      items = (await window.cth.floorSubprojects()).items;
+      setSubprojects(items);
+    } catch { /* keep the last detection */ }
+    const r = analysisScope(floorScope, items);
+    if (!r.ok) { setError(r.error); return null; }
+    return r.scope;
+  };
+
+  const promptInput = (round: 1 | 2, scope: string[]) => ({
     repoRoot: repo,
-    existingAgents: existingAgentsOf(agents),
+    // « Repartir de zéro » : the new team is designed without the current one.
+    existingAgents: mode === 'scratch' ? [] : existingAgentsOf(agents),
     models: modelIdsByProvider((p) => modelsForProvider(p as AgentProvider)),
     round,
+    ...(scope.length > 0 ? { scope } : {}),
     ...(round === 2 ? { analysis, answers: questions.map((q, i) => ({ question: q, answer: answers[i] ?? '' })) } : {})
   });
 
@@ -74,7 +120,8 @@ export function ComposeTeamModal({ onClose }: { onClose: () => void }) {
       setQuestions(res.questions);
       setAnswers(res.questions.map(() => ''));
     } else if (res.kind === 'agents') {
-      setCards(cardsFromResponse(res));
+      setCards(cardsFromResponse(res, cardScope));
+      setTeamSummary(res.teamSummary);
     } else {
       setError(res.error);
     }
@@ -83,13 +130,15 @@ export function ComposeTeamModal({ onClose }: { onClose: () => void }) {
 
   const analyze = async (round: 1 | 2) => {
     if (!repo) return;
+    setError('');
+    const scope = await resolveScope();
+    if (!scope) return;
     beforeAnalyzeRef.current = step === 'questions' ? 'questions' : 'idle';
     cancelledRef.current = false;
-    setError('');
     setStep('analyzing');
     let res: TeamResponse;
     try {
-      res = await window.cth.teamAnalyze(promptInput(round));
+      res = await window.cth.teamAnalyze(promptInput(round, scope));
     } catch (e) {
       res = { kind: 'error', error: e instanceof Error ? e.message : String(e) };
     }
@@ -103,7 +152,10 @@ export function ComposeTeamModal({ onClose }: { onClose: () => void }) {
   };
 
   const copyPrompt = async (round: 1 | 2) => {
-    const text = await window.cth.teamPrompt(promptInput(round));
+    setError('');
+    const scope = await resolveScope();
+    if (!scope) return;
+    const text = await window.cth.teamPrompt(promptInput(round, scope));
     if (!text) { setError(t('team.promptFailed')); return; }
     setError('');
     const r = await window.cth.copyToClipboard(text);
@@ -124,6 +176,7 @@ export function ComposeTeamModal({ onClose }: { onClose: () => void }) {
   const restart = () => {
     setStep('idle'); setAnalysis(''); setQuestions([]); setAnswers([]);
     setCards([]); setError(''); setPasted(''); setResult(null);
+    setTeamSummary(undefined); setSaveNotice('');
   };
 
   const switchTab = (next: Tab) => {
@@ -144,20 +197,49 @@ export function ComposeTeamModal({ onClose }: { onClose: () => void }) {
       return { ...c, manifest: manifest as unknown as HireManifest, errors: [] };
     }));
 
+  /** Remember the written team for the floor's scope (summary now, agents at
+   *  parking time) and make it the current team. In 'normal' mode an existing
+   *  current team is updated (its saved agents and queues kept); 'scratch'
+   *  always starts a new one. A failure only shows a notice. */
+  const rememberTeam = async (written: HireManifest[]) => {
+    const st = useStore.getState();
+    const scope = [...(st.floorScope?.scope ?? [])].sort();
+    const updateId = mode === 'normal' ? st.currentTeamId : null;
+    const prev = updateId ? st.knownTeams.find((t) => t.id === updateId) : undefined;
+    try {
+      const r = await window.cth.teamsSave({
+        ...(updateId ? { id: updateId } : {}),
+        scope,
+        summary: teamSummary ?? localSummary(written),
+        agents: prev?.agents ?? [],
+        queues: prev?.queues ?? {}
+      });
+      if (!r.ok) { setSaveNotice(r.error); return; }
+      await useStore.getState().setCurrentTeam(r.team.id);
+      useStore.getState().setKnownTeams(await window.cth.teamsList(scope));
+    } catch (e) {
+      setSaveNotice(e instanceof Error ? e.message : String(e));
+    }
+  };
+
   const write = async () => {
-    const { manifests, cardErrors } = prepareWrite(cards);
+    const { manifests, cardErrors } = prepareWrite(cards, cardScope);
     setCards((cs) => cs.map((c, i) => ({ ...c, errors: cardErrors[i] })));
     const blocked = cards.some((c, i) => c.checked && !c.invalid && cardErrors[i].length > 0);
     if (blocked || manifests.length === 0 || manifests.length > TEAM_SIZE.max) return;
     setWriting(true);
+    setSaveNotice('');
+    let res: WriteResult;
     try {
-      setResult(await window.cth.teamWrite(repo, manifests));
+      res = await window.cth.teamWrite(repo, manifests);
     } catch (e) {
-      setResult({ written: [], errors: [e instanceof Error ? e.message : String(e)], manifests: [] });
+      res = { written: [], errors: [e instanceof Error ? e.message : String(e)], manifests: [] };
     } finally {
       setWriting(false);
     }
+    setResult(res);
     setStep('written');
+    if (res.manifests.length > 0) void rememberTeam(res.manifests);
   };
 
   const importNow = () => {
@@ -320,6 +402,7 @@ export function ComposeTeamModal({ onClose }: { onClose: () => void }) {
                     card={c}
                     onToggle={(checked) => updateCard(i, { checked })}
                     onField={(k, v) => updateField(i, k, v)}
+                    workdirChoices={cardScope ? workdirOptions(cardScope, subprojects) : undefined}
                   />
                 ))}
                 {tooMany && <p style={hintStyle}>{t('team.tooMany', { n: checkedCount, max: TEAM_SIZE.max })}</p>}
@@ -354,6 +437,11 @@ export function ComposeTeamModal({ onClose }: { onClose: () => void }) {
                     </ul>
                   </>
                 )}
+                {saveNotice && (
+                  <p style={hintStyle}>
+                    L'équipe n'a pas pu être mémorisée pour ce périmètre ({saveNotice}). Les fiches sont écrites : tu peux quand même les importer.
+                  </p>
+                )}
                 <Row>
                   <PixelButton variant="secondary" onClick={() => void window.cth.teamOpenFolder(repo)}>
                     <span style={{ display: 'inline-flex', gap: 6, alignItems: 'center' }}>
@@ -373,10 +461,12 @@ export function ComposeTeamModal({ onClose }: { onClose: () => void }) {
   );
 }
 
-function AgentCardEditor({ card, onToggle, onField }: {
+function AgentCardEditor({ card, onToggle, onField, workdirChoices }: {
   card: ComposeCard;
   onToggle: (checked: boolean) => void;
   onField: (key: keyof HireManifest, value: unknown) => void;
+  /** Sub-projects of the scope + racine; absent outside a monorepo scope. */
+  workdirChoices?: { value: string; label: string }[];
 }) {
   const { t } = useTranslation();
   const m = card.manifest;
@@ -461,6 +551,19 @@ function AgentCardEditor({ card, onToggle, onField }: {
                 {t('team.fieldIsolate')}
               </label>
             </div>
+            {workdirChoices && (
+              <Field label="Sous-projet">
+                <select
+                  value={workdirChoices.some((o) => o.value === m.workdir) ? m.workdir : ''}
+                  onChange={(e) => onField('workdir', e.target.value)}
+                  style={inputStyle}
+                >
+                  {workdirChoices.map((o) => (
+                    <option key={o.value} value={o.value} title={o.value || undefined}>{o.label}</option>
+                  ))}
+                </select>
+              </Field>
+            )}
             {card.why && <p style={{ ...hintStyle, fontStyle: 'italic' }}>{t('team.why', { why: card.why })}</p>}
           </>
         )}
