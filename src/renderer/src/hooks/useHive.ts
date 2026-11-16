@@ -1,5 +1,5 @@
 import { useEffect, useRef } from 'react';
-import { useStore, type Agent, type QueuedMessage, type StationKind, type ToolKind } from '@/store/store';
+import { floorRepo, useStore, type Agent, type QueuedMessage, type StationKind, type ToolKind } from '@/store/store';
 import {
   buildSpawnCommand,
   ASSISTANT_MODEL,
@@ -20,6 +20,7 @@ import { bridgeOf, providerPreset } from '../../../shared/agentProvider';
 import { isDurableRole, preferredAgentRole, roleForHiveSpawn } from '../../../shared/agentRole';
 import { inboxNudgeText } from '../../../shared/hiveNudge';
 import { resolveGodName } from '../../../shared/godIdentity';
+import { restoreCwd } from '@/store/respawn';
 import { acquireTerminal, resetTerminal, isTerminalAutomationSafe } from '@/components/terminalPool';
 import { canDeliverToAgent, deliverWithAcknowledgement, checkPrecondition } from './queueDelivery';
 import { OFFICE_CAST, DEFAULT_CHARACTER } from '@/agents/cast';
@@ -1207,8 +1208,8 @@ export function useHive(config: HarnessConfig | null): void {
         const cfg = await window.cth.getConfig();
         // Isolated agents run inside their worktree (a.cwd is the base repo); re-enter
         // it if it still exists, else fall back to the base cwd — same as restoreTeam.
-        let cwd = a.cwd;
-        if (a.worktreePath && (await window.cth.gitIsRepo(a.worktreePath))) cwd = a.worktreePath;
+        const worktreeAlive = a.worktreePath ? await window.cth.gitIsRepo(a.worktreePath) : false;
+        const { cwd } = restoreCwd(a, worktreeAlive, floorRepo);
         await window.cth.killPty(deadId);
         // Soft-reset the pooled xterm in place (no-op if none): re-arm input and
         // clear the stale frame so the revived TUI paints clean — like the button.
